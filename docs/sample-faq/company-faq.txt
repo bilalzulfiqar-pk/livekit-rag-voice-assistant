@@ -1,0 +1,16 @@
+LiveKit RAG Voice Assistant Sample FAQ
+
+Q: What services do you offer?
+A: We build LiveKit-based AI voice assistants, document-grounded RAG backends, FastAPI services, and custom frontend integrations for realtime AI experiences.
+
+Q: Do you support uploaded knowledge-base documents?
+A: Yes. The backend can ingest plain text, PDF, and DOCX files, generate embeddings, and answer grounded questions from the uploaded content.
+
+Q: Can the assistant answer normal general questions too?
+A: Yes. If a question is not about your uploaded documents or company knowledge, the voice agent can still answer normally with its base language model.
+
+Q: How does weather support work in this demo?
+A: The voice agent can call a weather tool for current weather in a named city and respond with a short voice-friendly answer.
+
+Q: Does the voice agent merge the backend into the same process?
+A: No. The LiveKit voice agent and the RAG backend stay as separate services so they are easier to maintain, test, and scale.

@@ -1,0 +1,5 @@
+livekit-agents[silero,turn-detector]>=1.5,<1.6
+livekit-plugins-noise-cancellation>=0.2,<0.3
+python-dotenv>=1.0,<2.0
+httpx>=0.28,<0.29
+av==17.0.0

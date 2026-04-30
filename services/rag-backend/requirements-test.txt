@@ -1,0 +1,13 @@
+fastapi==0.116.1
+uvicorn[standard]==0.35.0
+pydantic-settings==2.10.1
+sqlalchemy==2.0.41
+asyncpg==0.30.0
+pgvector==0.3.6
+python-multipart==0.0.20
+pdfplumber==0.11.7
+python-docx==1.1.2
+reportlab==4.4.4
+openai==2.17.0
+httpx==0.28.1
+orjson==3.10.18
