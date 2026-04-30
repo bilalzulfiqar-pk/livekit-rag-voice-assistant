@@ -73,6 +73,7 @@ LEXICAL_STOP_WORDS = {
 }
 
 LEXICAL_TERM_NORMALIZATION: dict[str, str] = {}
+POSTGRES_TEXT_SEARCH_CONFIG = "english"
 
 COMPARISON_QUERY_MARKERS = (
     "difference between",
@@ -345,7 +346,7 @@ class RetrievalService:
         candidate_limit = max(limit * 8, settings.chat_retrieval_fetch_k * 6, 24)
         support_payload = RetrievalRequest(query=question, top_k=limit, document_id=document_id)
         if sparse_query_text is not None:
-            tsquery = func.websearch_to_tsquery("simple", sparse_query_text)
+            tsquery = func.websearch_to_tsquery(POSTGRES_TEXT_SEARCH_CONFIG, sparse_query_text)
             sparse_rank = func.ts_rank_cd(Chunk.search_vector, tsquery).label("sparse_rank")
             statement = (
                 select(
@@ -574,7 +575,7 @@ class RetrievalService:
         candidate_limit = max(limit * 8, settings.chat_retrieval_fetch_k * 4, 24)
 
         if sparse_query_text is not None:
-            tsquery = func.websearch_to_tsquery("simple", sparse_query_text)
+            tsquery = func.websearch_to_tsquery(POSTGRES_TEXT_SEARCH_CONFIG, sparse_query_text)
             sparse_rank = func.ts_rank_cd(Chunk.search_vector, tsquery).label("sparse_rank")
             statement = (
                 select(
@@ -893,7 +894,7 @@ class RetrievalService:
         if sparse_query_text is None or limit <= 0:
             return []
 
-        tsquery = func.websearch_to_tsquery("simple", sparse_query_text)
+        tsquery = func.websearch_to_tsquery(POSTGRES_TEXT_SEARCH_CONFIG, sparse_query_text)
         sparse_rank = func.ts_rank_cd(Chunk.search_vector, tsquery).label("sparse_rank")
         statement = (
             select(
@@ -1126,10 +1127,7 @@ class RetrievalService:
 
     @staticmethod
     def build_sparse_query_text(question: str) -> str | None:
-        sparse_terms = [
-            term for term in RetrievalService._extract_lexical_terms(question)
-            if "_" not in term
-        ]
+        sparse_terms = RetrievalService._extract_sparse_terms(question)
         query_facets = RetrievalService._extract_query_facets(question)
         sparse_parts = list(sparse_terms)
         for facet in sorted(query_facets):
@@ -1141,6 +1139,26 @@ class RetrievalService:
         if not sparse_parts:
             return None
         return " ".join(sparse_parts)
+
+    @staticmethod
+    def _extract_sparse_terms(question: str) -> list[str]:
+        terms: list[str] = []
+        seen_terms: set[str] = set()
+        normalized_question = re.sub(r"\bu\.\s*s\.?\b", "united states", question.lower())
+        for token in re.findall(r"[a-z0-9']+", normalized_question):
+            normalized = RetrievalService._normalize_sparse_token(token)
+            if len(normalized) < 4 or normalized in LEXICAL_STOP_WORDS or normalized in seen_terms:
+                continue
+            terms.append(normalized)
+            seen_terms.add(normalized)
+        return terms
+
+    @staticmethod
+    def _normalize_sparse_token(token: str) -> str:
+        cleaned = token.lower()
+        if cleaned.endswith("'s"):
+            cleaned = cleaned[:-2]
+        return cleaned
 
     @staticmethod
     def _normalize_lexical_token(token: str) -> str:
@@ -1231,7 +1249,7 @@ class RetrievalService:
 
     @staticmethod
     def _should_run_lexical_rescue(query_terms: list[str]) -> bool:
-        return len(query_terms) >= 3 or any(
+        return len(query_terms) >= 2 or any(
             term.startswith(("chapter_", "section_", "part_", "phase_", "stage_", "tier_", "level_"))
             or any(char.isdigit() for char in term)
             for term in query_terms

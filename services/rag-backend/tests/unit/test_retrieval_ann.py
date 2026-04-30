@@ -448,6 +448,7 @@ class RetrievalAnnTests(unittest.IsolatedAsyncioTestCase):
                 FakeResult(rows=[(7, 3, "doc.md", 2, 0.11)]),
                 FakeResult(rows=[(7, "Exact chunk text")]),
                 FakeResult(rows=[]),
+                FakeResult(rows=[]),
             ]
         )
         service = RetrievalService.__new__(RetrievalService)
@@ -462,7 +463,7 @@ class RetrievalAnnTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.matches[0].chunk_id, 7)
         self.assertEqual(response.matches[0].chunk_text, "Exact chunk text")
         self.assertEqual(response.matches[0].metadata["base_source_kinds"], ["vector"])
-        self.assertEqual(session.execute.await_count, 3)
+        self.assertEqual(session.execute.await_count, 4)
 
     async def test_search_for_chat_merges_lexical_rescue_matches_for_benefit_queries(self):
         service = RetrievalService.__new__(RetrievalService)
@@ -528,7 +529,22 @@ class RetrievalAnnTests(unittest.IsolatedAsyncioTestCase):
             "What out-of-pocket costs count toward Part D drug spending?"
         )
 
-        self.assertEqual(sparse_query, "pocket cost count toward part drug spending \"part d\"")
+        self.assertEqual(sparse_query, "pocket costs count toward part drug spending \"part d\"")
+
+    def test_build_sparse_query_text_preserves_plural_faq_terms_for_stemming(self):
+        sparse_query = RetrievalService.build_sparse_query_text(
+            "What services do you offer?"
+        )
+
+        self.assertEqual(sparse_query, "services offer")
+
+    def test_short_two_term_queries_now_trigger_lexical_rescue(self):
+        query_terms = RetrievalService._extract_lexical_terms(
+            "What services do you offer?"
+        )
+
+        self.assertEqual(query_terms, ["service", "offer"])
+        self.assertTrue(RetrievalService._should_run_lexical_rescue(query_terms))
 
     async def test_load_neighbor_matches_clamps_lower_bound_at_zero(self):
         session = AsyncMock()

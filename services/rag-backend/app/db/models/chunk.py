@@ -11,6 +11,8 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.core.config import settings
 from app.db.base import Base
 
+POSTGRES_TEXT_SEARCH_CONFIG = "english"
+
 
 class Chunk(Base):
     __tablename__ = "chunks"
@@ -29,7 +31,7 @@ class Chunk(Base):
     search_vector: Mapped[str | None] = mapped_column(
         TSVECTOR,
         Computed(
-            "to_tsvector('simple', lower(coalesce(chunk_text, '')))",
+            f"to_tsvector('{POSTGRES_TEXT_SEARCH_CONFIG}', lower(coalesce(chunk_text, '')))",
             persisted=True,
         ),
         nullable=True,

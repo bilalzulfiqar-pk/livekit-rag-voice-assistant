@@ -15,6 +15,11 @@ POSTGRES_EXTENSION_STATEMENTS = (
 )
 
 HNSW_CHUNK_EMBEDDING_INDEX_NAME = "ix_chunks_embedding_hnsw"
+SEARCH_VECTOR_GIN_INDEX_NAME = "ix_chunks_search_vector_gin"
+POSTGRES_TEXT_SEARCH_CONFIG = "english"
+SEARCH_VECTOR_GENERATED_EXPRESSION = (
+    f"to_tsvector('{POSTGRES_TEXT_SEARCH_CONFIG}', lower(coalesce(chunk_text, '')))"
+)
 
 FINAL_SCHEMA_STATEMENTS = (
     "CREATE INDEX IF NOT EXISTS ix_documents_filename ON documents (filename)",
@@ -22,7 +27,7 @@ FINAL_SCHEMA_STATEMENTS = (
     (
         "ALTER TABLE chunks "
         "ADD COLUMN IF NOT EXISTS search_vector tsvector "
-        "GENERATED ALWAYS AS (to_tsvector('simple', lower(coalesce(chunk_text, '')))) STORED"
+        f"GENERATED ALWAYS AS ({SEARCH_VECTOR_GENERATED_EXPRESSION}) STORED"
     ),
     (
         f"CREATE INDEX IF NOT EXISTS {HNSW_CHUNK_EMBEDDING_INDEX_NAME} "
@@ -30,7 +35,7 @@ FINAL_SCHEMA_STATEMENTS = (
         "WHERE embedding IS NOT NULL"
     ),
     (
-        "CREATE INDEX IF NOT EXISTS ix_chunks_search_vector_gin "
+        f"CREATE INDEX IF NOT EXISTS {SEARCH_VECTOR_GIN_INDEX_NAME} "
         "ON chunks USING gin (search_vector)"
     ),
     (
@@ -51,6 +56,7 @@ async def prepare_database_schema(connection: AsyncConnection) -> None:
 
     await connection.run_sync(Base.metadata.create_all)
     await _ensure_chunk_vector_dimension(connection)
+    await _ensure_chunk_search_vector_config(connection)
 
     for statement in FINAL_SCHEMA_STATEMENTS:
         await connection.execute(text(statement))
@@ -96,4 +102,48 @@ async def _ensure_chunk_vector_dimension(connection: AsyncConnection) -> None:
     await connection.execute(text("UPDATE chunks SET embedding = NULL WHERE embedding IS NOT NULL"))
     await connection.execute(
         text(f"ALTER TABLE chunks ALTER COLUMN embedding TYPE vector({target_dimension})")
+    )
+
+
+async def _ensure_chunk_search_vector_config(connection: AsyncConnection) -> None:
+    result = await connection.execute(
+        text(
+            """
+            SELECT pg_get_expr(ad.adbin, ad.adrelid)
+            FROM pg_attribute a
+            JOIN pg_class c ON c.oid = a.attrelid
+            JOIN pg_attrdef ad ON ad.adrelid = a.attrelid AND ad.adnum = a.attnum
+            WHERE c.relname = 'chunks'
+              AND a.attname = 'search_vector'
+              AND a.attnum > 0
+              AND NOT a.attisdropped
+            """
+        )
+    )
+    current_expression = result.scalar_one_or_none()
+
+    if current_expression is None:
+        return
+
+    normalized_expression = current_expression.lower()
+    target_expression = SEARCH_VECTOR_GENERATED_EXPRESSION.lower()
+
+    if target_expression in normalized_expression:
+        return
+
+    if "to_tsvector(" not in normalized_expression:
+        return
+
+    logger.info(
+        "Rebuilding chunks.search_vector to use PostgreSQL '%s' stemming.",
+        POSTGRES_TEXT_SEARCH_CONFIG,
+    )
+    await connection.execute(text(f"DROP INDEX IF EXISTS {SEARCH_VECTOR_GIN_INDEX_NAME}"))
+    await connection.execute(text("ALTER TABLE chunks DROP COLUMN IF EXISTS search_vector"))
+    await connection.execute(
+        text(
+            "ALTER TABLE chunks "
+            "ADD COLUMN search_vector tsvector "
+            f"GENERATED ALWAYS AS ({SEARCH_VECTOR_GENERATED_EXPRESSION}) STORED"
+        )
     )
