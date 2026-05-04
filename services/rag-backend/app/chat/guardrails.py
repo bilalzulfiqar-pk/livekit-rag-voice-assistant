@@ -319,7 +319,9 @@ def _should_clarify_fragment(question: str, query_terms: list[str]) -> bool:
     if stripped_question in FILLER_PHRASES:
         return True
     if any(pattern.search(question) for pattern in CLARIFY_FRAGMENT_PATTERNS):
-        return True
+        content_terms = [term for term in query_terms if term not in LOW_INFORMATION_TERMS]
+        if not content_terms:
+            return True
     if not query_terms or all(term in LOW_INFORMATION_TERMS for term in query_terms):
         return True
     if len(query_terms) == 1 and not any(pattern.search(question) for pattern in DEFINITION_PATTERNS):
@@ -386,4 +388,3 @@ def _detect_inclusion_exclusion_route(
 
 def _is_broad_summary_question(question: str) -> bool:
     return any(pattern.search(question) for pattern in BROAD_SUMMARY_PATTERNS)
-

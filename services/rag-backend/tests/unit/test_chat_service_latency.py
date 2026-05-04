@@ -2179,6 +2179,11 @@ class ChatServiceLatencyTests(unittest.IsolatedAsyncioTestCase):
             {QUERY_INTENT_DEFAULT_FACT, "definition"},
         )
 
+    def test_route_query_does_not_clarify_document_question_with_specific_context(self):
+        routed_query = route_query("What card is this benefits guide for?")
+
+        self.assertNotEqual(routed_query.intent, QUERY_INTENT_CLARIFY_FRAGMENT)
+
     async def test_deadline_route_uses_llm_when_composer_is_not_allowlisted(self):
         service = ChatService.__new__(ChatService)
         service.session = None

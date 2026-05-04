@@ -59,7 +59,9 @@ class KnowledgeBaseToolset(Toolset):
     @function_tool(
         description=(
             "Use this tool only for company, FAQ, policy, support, and "
-            "uploaded-document questions. Pass the user's question as-is."
+            "uploaded-document questions. Use it for questions about the uploaded "
+            "guide or PDF too, including phrases like 'this guide' or 'this document'. "
+            "Pass the user's question as-is."
         )
     )
     async def ask_knowledge_base(self, question: str) -> str:
