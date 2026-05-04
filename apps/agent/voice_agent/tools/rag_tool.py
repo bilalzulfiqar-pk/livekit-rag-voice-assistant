@@ -61,7 +61,9 @@ class KnowledgeBaseToolset(Toolset):
             "Use this tool only for company, FAQ, policy, support, and "
             "uploaded-document questions. Use it for questions about the uploaded "
             "guide or PDF too, including phrases like 'this guide' or 'this document'. "
-            "Pass the user's question as-is."
+            "If the user makes a short follow-up such as 'yes', 'more', or "
+            "'tell me more' right after a document answer, rewrite it into a clear "
+            "standalone question using the recent conversation topic before calling this tool."
         )
     )
     async def ask_knowledge_base(self, question: str) -> str:
