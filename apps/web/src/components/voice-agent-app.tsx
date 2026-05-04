@@ -1345,7 +1345,7 @@ function VoiceAgentShell({ onSessionReset }: VoiceAgentShellProps) {
 
                 {isSystemStatusOpen && (
                   <div className="system-status-content animate-[panel-fade-up_360ms_cubic-bezier(0.22,1,0.36,1)]">
-                    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                    <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-7">
                       {pipelineItems.map((item) => (
                         <div
                           key={item.label}
@@ -1357,17 +1357,17 @@ function VoiceAgentShell({ onSessionReset }: VoiceAgentShellProps) {
                             </p>
                             <span className="pipeline-card-orbit" aria-hidden="true" />
                           </div>
-                          <div className="mt-4">
+                          <div className="mt-4 flex flex-col gap-3 xl:mt-3 xl:gap-2">
                             <StatusChip
                               label={item.value}
                               tone={toneForPipeline(item.value)}
                             />
+                            {"latencyMs" in item ? (
+                              <p className="text-sm leading-6 text-[color:var(--color-text-secondary)] xl:text-[0.82rem] xl:leading-5">
+                                Latency: {formatLatency(item.latencyMs ?? null)}
+                              </p>
+                            ) : null}
                           </div>
-                          {"latencyMs" in item ? (
-                            <p className="mt-3 text-sm leading-7 text-[color:var(--color-text-secondary)]">
-                              Latency: {formatLatency(item.latencyMs ?? null)}
-                            </p>
-                          ) : null}
                         </div>
                       ))}
                     </div>

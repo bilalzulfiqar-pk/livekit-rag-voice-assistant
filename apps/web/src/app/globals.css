@@ -275,6 +275,18 @@ body {
     box-shadow 180ms ease;
 }
 
+@media (min-width: 1280px) {
+  .pipeline-card {
+    min-height: 7.15rem;
+    padding: 0.9rem 0.95rem;
+  }
+
+  .pipeline-card::before {
+    inset-inline-start: 0.95rem;
+    width: 2.4rem;
+  }
+}
+
 .pipeline-card::before {
   content: "";
   position: absolute;
