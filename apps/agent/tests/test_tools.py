@@ -289,7 +289,7 @@ class VoiceAgentTelemetryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(messages[-1]["weather"], {"status": "idle", "latencyMs": None, "fallback": None})
         self.assertEqual(
             messages[-1]["pipeline"],
-            {"sttLatencyMs": None, "llmLatencyMs": None, "ttsLatencyMs": None},
+            {"sttLatencyMs": None, "llmLatencyMs": None, "ttsLatencyMs": None, "inputMode": None},
         )
 
     async def test_startup_ready_probe_publishes_ready(self) -> None:
@@ -428,7 +428,7 @@ class VoiceAgentTelemetryTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(
             telemetry.snapshot.pipeline.to_payload(),
-            {"sttLatencyMs": 190, "llmLatencyMs": 620, "ttsLatencyMs": 280},
+            {"sttLatencyMs": 190, "llmLatencyMs": 620, "ttsLatencyMs": 280, "inputMode": None},
         )
         self.assertEqual(messages[-1]["pipeline"]["sttLatencyMs"], 190)
         self.assertEqual(messages[-1]["pipeline"]["llmLatencyMs"], 620)
@@ -444,9 +444,9 @@ class VoiceAgentTelemetryTests(unittest.IsolatedAsyncioTestCase):
         telemetry.publish_stt_latency(210)
         telemetry.publish_llm_latency(540)
         telemetry.publish_tts_latency(310)
-        telemetry.start_user_turn()
+        telemetry.start_user_turn(input_mode="text")
 
         self.assertEqual(
             telemetry.snapshot.pipeline.to_payload(),
-            {"sttLatencyMs": 210, "llmLatencyMs": 540, "ttsLatencyMs": 310},
+            {"sttLatencyMs": None, "llmLatencyMs": None, "ttsLatencyMs": None, "inputMode": "text"},
         )

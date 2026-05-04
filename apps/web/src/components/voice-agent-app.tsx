@@ -365,6 +365,22 @@ function formatLatency(latencyMs: number | null) {
   return latencyMs == null ? "Awaiting" : `${latencyMs} ms`;
 }
 
+function formatPipelineLatency(
+  latencyMs: number | null,
+  {
+    inputMode,
+    label,
+  }: {
+    inputMode: ToolingSnapshot["pipeline"]["inputMode"];
+    label: "stt" | "llm" | "tts";
+  },
+) {
+  if (label === "stt" && inputMode === "text") {
+    return "0 ms (Text typed)";
+  }
+  return formatLatency(latencyMs);
+}
+
 function AuralisLogoMark() {
   return (
     <div className="auralis-logo-mark" aria-hidden="true">
@@ -636,6 +652,7 @@ function VoiceAgentShell({ onSessionReset }: VoiceAgentShellProps) {
         : null,
     [activeLiveTranscriptId, transcriptEntries],
   );
+
   const activeState = heroState(
     agent.state,
     session.connectionState,
@@ -723,6 +740,12 @@ function VoiceAgentShell({ onSessionReset }: VoiceAgentShellProps) {
       shortTermMemory: true,
     };
 
+    const sttValue = !session.isConnected
+      ? "Standby"
+      : livePartialEntry?.role === "user"
+        ? "Streaming"
+        : "Ready";
+
     return [
       {
         label: "Turn detection",
@@ -734,8 +757,12 @@ function VoiceAgentShell({ onSessionReset }: VoiceAgentShellProps) {
       },
       {
         label: "STT",
-        value: livePartialEntry?.role === "user" ? "Streaming" : session.isConnected ? "Ready" : "Standby",
+        value: sttValue,
         latencyMs: currentToolingSnapshot.pipeline.sttLatencyMs,
+        latencyText: formatPipelineLatency(currentToolingSnapshot.pipeline.sttLatencyMs, {
+          inputMode: currentToolingSnapshot.pipeline.inputMode,
+          label: "stt",
+        }),
       },
       {
         label: "LLM",
@@ -750,11 +777,19 @@ function VoiceAgentShell({ onSessionReset }: VoiceAgentShellProps) {
                 ? "Ready"
                 : "Standby",
         latencyMs: currentToolingSnapshot.pipeline.llmLatencyMs,
+        latencyText: formatPipelineLatency(currentToolingSnapshot.pipeline.llmLatencyMs, {
+          inputMode: currentToolingSnapshot.pipeline.inputMode,
+          label: "llm",
+        }),
       },
       {
         label: "TTS",
         value: agent.state === "speaking" ? "Replying" : session.isConnected ? "Ready" : "Standby",
         latencyMs: currentToolingSnapshot.pipeline.ttsLatencyMs,
+        latencyText: formatPipelineLatency(currentToolingSnapshot.pipeline.ttsLatencyMs, {
+          inputMode: currentToolingSnapshot.pipeline.inputMode,
+          label: "tts",
+        }),
       },
       {
         label: "Noise filter",
@@ -769,7 +804,13 @@ function VoiceAgentShell({ onSessionReset }: VoiceAgentShellProps) {
           currentCapabilities.interruptions === "adaptive" ? "Adaptive" : "Ready",
       },
     ];
-  }, [agent.state, capabilities, currentToolingSnapshot.pipeline, livePartialEntry, session.isConnected]);
+  }, [
+    agent.state,
+    capabilities,
+    currentToolingSnapshot.pipeline,
+    livePartialEntry,
+    session.isConnected,
+  ]);
 
   const startCurrentSession = useCallback(async () => {
     try {
@@ -878,6 +919,22 @@ function VoiceAgentShell({ onSessionReset }: VoiceAgentShellProps) {
 
     try {
       setTextInputError(null);
+      if (agent.state === "speaking") {
+        const interruptedId =
+          recentSpeakingAssistantIdRef.current ??
+          [...transcriptEntries]
+            .reverse()
+            .find((entry) => entry.role === "assistant")?.id ??
+          null;
+
+        if (interruptedId) {
+          setInterruptedIds((currentIds) =>
+            currentIds.includes(interruptedId)
+              ? currentIds
+              : [...currentIds, interruptedId],
+          );
+        }
+      }
       await sessionMessages.send(message);
       setTextInputValue("");
     } catch (error) {
@@ -1362,11 +1419,11 @@ function VoiceAgentShell({ onSessionReset }: VoiceAgentShellProps) {
                               label={item.value}
                               tone={toneForPipeline(item.value)}
                             />
-                            {"latencyMs" in item ? (
-                              <p className="text-sm leading-6 text-[color:var(--color-text-secondary)] xl:text-[0.82rem] xl:leading-5">
-                                Latency: {formatLatency(item.latencyMs ?? null)}
-                              </p>
-                            ) : null}
+                          {"latencyMs" in item ? (
+                            <p className="text-sm leading-6 text-[color:var(--color-text-secondary)] xl:text-[0.82rem] xl:leading-5">
+                              Latency: {"latencyText" in item ? item.latencyText : formatLatency(item.latencyMs ?? null)}
+                            </p>
+                          ) : null}
                           </div>
                         </div>
                       ))}

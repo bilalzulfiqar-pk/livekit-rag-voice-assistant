@@ -151,7 +151,7 @@ async def entrypoint(ctx: JobContext) -> None:
     def on_user_input_transcribed(event) -> None:
         if not event.is_final:
             return
-        telemetry.start_user_turn()
+        telemetry.start_user_turn(input_mode="voice")
         logger.info(
             "user input transcribed",
             extra={"transcript": event.transcript.strip()},
@@ -161,7 +161,7 @@ async def entrypoint(ctx: JobContext) -> None:
     def on_conversation_item_added(event) -> None:
         item = getattr(event, "item", None)
         if getattr(item, "role", "") == "user":
-            telemetry.start_user_turn()
+            telemetry.start_user_turn(input_mode="text")
 
     @session.on("function_tools_executed")
     def on_function_tools_executed(event) -> None:

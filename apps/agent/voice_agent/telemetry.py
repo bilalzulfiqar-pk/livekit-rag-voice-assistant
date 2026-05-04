@@ -17,6 +17,7 @@ READY_PATH = "/ready"
 ToolStatusValue = str
 AnswerPathValue = str
 RagBackendState = str
+InputModeValue = str
 
 
 @dataclass(slots=True)
@@ -38,12 +39,14 @@ class PipelineLatencySnapshot:
     stt_latency_ms: int | None = None
     llm_latency_ms: int | None = None
     tts_latency_ms: int | None = None
+    input_mode: InputModeValue | None = None
 
-    def to_payload(self) -> dict[str, int | None]:
+    def to_payload(self) -> dict[str, int | str | None]:
         return {
             "sttLatencyMs": self.stt_latency_ms,
             "llmLatencyMs": self.llm_latency_ms,
             "ttsLatencyMs": self.tts_latency_ms,
+            "inputMode": self.input_mode,
         }
 
 
@@ -130,7 +133,7 @@ class VoiceAgentTelemetry:
         self._snapshot.rag_backend = "ready" if is_ready else "degraded"
         self.publish_snapshot()
 
-    def start_user_turn(self) -> None:
+    def start_user_turn(self, *, input_mode: InputModeValue | None = None) -> None:
         if self._current_turn_started and self._snapshot.last_answer_path == "unknown":
             return
         self._current_turn_started = True
@@ -139,6 +142,8 @@ class VoiceAgentTelemetry:
         self._snapshot.last_fallback = None
         self._snapshot.knowledge_base = ToolStatusSnapshot()
         self._snapshot.weather = ToolStatusSnapshot()
+        self._snapshot.pipeline = PipelineLatencySnapshot()
+        self._snapshot.pipeline.input_mode = input_mode
         self.publish_snapshot()
 
     def mark_tool_turn(self, function_name: str) -> None:

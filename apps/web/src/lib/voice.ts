@@ -50,6 +50,7 @@ export type PipelineLatencySnapshot = {
   sttLatencyMs: number | null;
   llmLatencyMs: number | null;
   ttsLatencyMs: number | null;
+  inputMode: "voice" | "text" | null;
 };
 
 export type ToolingSnapshot = {
@@ -98,6 +99,7 @@ const pipelineLatencySchema = z.object({
   sttLatencyMs: z.number().int().nonnegative().nullable(),
   llmLatencyMs: z.number().int().nonnegative().nullable(),
   ttsLatencyMs: z.number().int().nonnegative().nullable(),
+  inputMode: z.enum(["voice", "text"]).nullable(),
 });
 
 const toolingSnapshotSchema = z.object({
@@ -179,6 +181,7 @@ export function createDefaultToolingSnapshot(
       sttLatencyMs: null,
       llmLatencyMs: null,
       ttsLatencyMs: null,
+      inputMode: null,
     },
   };
 }
