@@ -287,6 +287,10 @@ class VoiceAgentTelemetryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(messages[-1]["lastFallback"], None)
         self.assertEqual(messages[-1]["knowledgeBase"], {"status": "idle", "latencyMs": None, "fallback": None})
         self.assertEqual(messages[-1]["weather"], {"status": "idle", "latencyMs": None, "fallback": None})
+        self.assertEqual(
+            messages[-1]["pipeline"],
+            {"sttLatencyMs": None, "llmLatencyMs": None, "ttsLatencyMs": None},
+        )
 
     async def test_startup_ready_probe_publishes_ready(self) -> None:
         probe = AsyncMock(return_value=True)
@@ -409,3 +413,40 @@ class VoiceAgentTelemetryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(telemetry.snapshot.rag_backend, "ready")
         self.assertEqual(messages[-1]["knowledgeBase"]["status"], "idle")
         self.assertEqual(messages[-1]["weather"]["status"], "idle")
+
+    def test_pipeline_latency_updates_are_published(self) -> None:
+        messages: list[dict[str, object]] = []
+        telemetry = VoiceAgentTelemetry(
+            session_id="room-123",
+            rag_backend_url="http://localhost:8000",
+            publisher=lambda payload: messages.append(json.loads(payload)),
+        )
+
+        telemetry.publish_stt_latency(190)
+        telemetry.publish_llm_latency(620)
+        telemetry.publish_tts_latency(280)
+
+        self.assertEqual(
+            telemetry.snapshot.pipeline.to_payload(),
+            {"sttLatencyMs": 190, "llmLatencyMs": 620, "ttsLatencyMs": 280},
+        )
+        self.assertEqual(messages[-1]["pipeline"]["sttLatencyMs"], 190)
+        self.assertEqual(messages[-1]["pipeline"]["llmLatencyMs"], 620)
+        self.assertEqual(messages[-1]["pipeline"]["ttsLatencyMs"], 280)
+
+    def test_start_user_turn_keeps_latest_pipeline_latencies(self) -> None:
+        telemetry = VoiceAgentTelemetry(
+            session_id="room-123",
+            rag_backend_url="http://localhost:8000",
+            publisher=lambda payload: None,
+        )
+
+        telemetry.publish_stt_latency(210)
+        telemetry.publish_llm_latency(540)
+        telemetry.publish_tts_latency(310)
+        telemetry.start_user_turn()
+
+        self.assertEqual(
+            telemetry.snapshot.pipeline.to_payload(),
+            {"sttLatencyMs": 210, "llmLatencyMs": 540, "ttsLatencyMs": 310},
+        )

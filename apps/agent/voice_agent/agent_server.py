@@ -55,6 +55,12 @@ OPENING_MESSAGE = (
     "Hello, I'm the LiveKit RAG Voice Assistant. Ask about your documents, the weather, or anything general."
 )
 
+
+def _seconds_to_ms(value: float | int | None) -> int | None:
+    if value is None:
+        return None
+    return max(round(float(value) * 1000), 0)
+
 server = AgentServer(
     permissions=WorkerPermissions(
         can_publish=True,
@@ -162,6 +168,27 @@ async def entrypoint(ctx: JobContext) -> None:
         for function_call in getattr(event, "function_calls", []):
             function_name = getattr(function_call, "name", "")
             telemetry.mark_tool_turn(function_name)
+
+    @session.on("metrics_collected")
+    def on_metrics_collected(event) -> None:
+        metrics = getattr(event, "metrics", None)
+        metrics_type = getattr(metrics, "type", "")
+        if metrics_type == "eou_metrics":
+            latency_ms = _seconds_to_ms(getattr(metrics, "transcription_delay", None))
+            if latency_ms is not None:
+                telemetry.publish_stt_latency(latency_ms)
+            return
+
+        if metrics_type in {"llm_metrics", "realtime_model_metrics"}:
+            latency_ms = _seconds_to_ms(getattr(metrics, "ttft", None))
+            if latency_ms is not None:
+                telemetry.publish_llm_latency(latency_ms)
+            return
+
+        if metrics_type == "tts_metrics":
+            latency_ms = _seconds_to_ms(getattr(metrics, "ttfb", None))
+            if latency_ms is not None:
+                telemetry.publish_tts_latency(latency_ms)
 
     @session.on("speech_created")
     def on_speech_created(event) -> None:

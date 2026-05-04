@@ -34,6 +34,20 @@ class ToolStatusSnapshot:
 
 
 @dataclass(slots=True)
+class PipelineLatencySnapshot:
+    stt_latency_ms: int | None = None
+    llm_latency_ms: int | None = None
+    tts_latency_ms: int | None = None
+
+    def to_payload(self) -> dict[str, int | None]:
+        return {
+            "sttLatencyMs": self.stt_latency_ms,
+            "llmLatencyMs": self.llm_latency_ms,
+            "ttsLatencyMs": self.tts_latency_ms,
+        }
+
+
+@dataclass(slots=True)
 class ToolingSnapshot:
     session_id: str
     last_answer_path: AnswerPathValue = "unknown"
@@ -41,6 +55,7 @@ class ToolingSnapshot:
     rag_backend: RagBackendState = "unknown"
     knowledge_base: ToolStatusSnapshot = field(default_factory=ToolStatusSnapshot)
     weather: ToolStatusSnapshot = field(default_factory=ToolStatusSnapshot)
+    pipeline: PipelineLatencySnapshot = field(default_factory=PipelineLatencySnapshot)
 
     def to_payload(self, *, sequence: int) -> dict[str, object]:
         return {
@@ -53,6 +68,7 @@ class ToolingSnapshot:
             "ragBackend": self.rag_backend,
             "knowledgeBase": self.knowledge_base.to_payload(),
             "weather": self.weather.to_payload(),
+            "pipeline": self.pipeline.to_payload(),
         }
 
 
@@ -85,6 +101,7 @@ class VoiceAgentTelemetry:
         self._snapshot.rag_backend = "warming_up"
         self._snapshot.knowledge_base = ToolStatusSnapshot()
         self._snapshot.weather = ToolStatusSnapshot()
+        self._snapshot.pipeline = PipelineLatencySnapshot()
         self.publish_snapshot()
 
     def publish_snapshot(self) -> None:
@@ -114,6 +131,8 @@ class VoiceAgentTelemetry:
         self.publish_snapshot()
 
     def start_user_turn(self) -> None:
+        if self._current_turn_started and self._snapshot.last_answer_path == "unknown":
+            return
         self._current_turn_started = True
         self._current_turn_has_tool = False
         self._snapshot.last_answer_path = "unknown"
@@ -182,6 +201,18 @@ class VoiceAgentTelemetry:
         if self._snapshot.last_answer_path == "weather":
             self._snapshot.last_fallback = fallback
 
+        self.publish_snapshot()
+
+    def publish_stt_latency(self, latency_ms: int) -> None:
+        self._snapshot.pipeline.stt_latency_ms = latency_ms
+        self.publish_snapshot()
+
+    def publish_llm_latency(self, latency_ms: int) -> None:
+        self._snapshot.pipeline.llm_latency_ms = latency_ms
+        self.publish_snapshot()
+
+    def publish_tts_latency(self, latency_ms: int) -> None:
+        self._snapshot.pipeline.tts_latency_ms = latency_ms
         self.publish_snapshot()
 
     async def _probe_readiness(self, readiness_url: str) -> bool:

@@ -46,6 +46,12 @@ export type ToolingToolState = {
   fallback: boolean | null;
 };
 
+export type PipelineLatencySnapshot = {
+  sttLatencyMs: number | null;
+  llmLatencyMs: number | null;
+  ttsLatencyMs: number | null;
+};
+
 export type ToolingSnapshot = {
   type: "tooling_snapshot";
   version: 1;
@@ -56,6 +62,7 @@ export type ToolingSnapshot = {
   ragBackend: RagBackendState;
   knowledgeBase: ToolingToolState;
   weather: ToolingToolState;
+  pipeline: PipelineLatencySnapshot;
 };
 
 export const TOOLING_STATUS_TOPIC = "app.tooling.status";
@@ -87,6 +94,12 @@ const toolingToolStateSchema = z.object({
   fallback: z.boolean().nullable(),
 });
 
+const pipelineLatencySchema = z.object({
+  sttLatencyMs: z.number().int().nonnegative().nullable(),
+  llmLatencyMs: z.number().int().nonnegative().nullable(),
+  ttsLatencyMs: z.number().int().nonnegative().nullable(),
+});
+
 const toolingSnapshotSchema = z.object({
   type: z.literal("tooling_snapshot"),
   version: z.literal(1),
@@ -97,6 +110,7 @@ const toolingSnapshotSchema = z.object({
   ragBackend: z.enum(["unknown", "warming_up", "ready", "degraded"]),
   knowledgeBase: toolingToolStateSchema,
   weather: toolingToolStateSchema,
+  pipeline: pipelineLatencySchema,
 });
 
 export const TRANSCRIPTION_FINAL_ATTRIBUTE = "lk.transcription_final";
@@ -160,6 +174,11 @@ export function createDefaultToolingSnapshot(
       status: "idle",
       latencyMs: null,
       fallback: null,
+    },
+    pipeline: {
+      sttLatencyMs: null,
+      llmLatencyMs: null,
+      ttsLatencyMs: null,
     },
   };
 }

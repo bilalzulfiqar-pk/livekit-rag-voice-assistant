@@ -735,6 +735,7 @@ function VoiceAgentShell({ onSessionReset }: VoiceAgentShellProps) {
       {
         label: "STT",
         value: livePartialEntry?.role === "user" ? "Streaming" : session.isConnected ? "Ready" : "Standby",
+        latencyMs: currentToolingSnapshot.pipeline.sttLatencyMs,
       },
       {
         label: "LLM",
@@ -748,10 +749,12 @@ function VoiceAgentShell({ onSessionReset }: VoiceAgentShellProps) {
               : session.isConnected
                 ? "Ready"
                 : "Standby",
+        latencyMs: currentToolingSnapshot.pipeline.llmLatencyMs,
       },
       {
         label: "TTS",
         value: agent.state === "speaking" ? "Replying" : session.isConnected ? "Ready" : "Standby",
+        latencyMs: currentToolingSnapshot.pipeline.ttsLatencyMs,
       },
       {
         label: "Noise filter",
@@ -766,7 +769,7 @@ function VoiceAgentShell({ onSessionReset }: VoiceAgentShellProps) {
           currentCapabilities.interruptions === "adaptive" ? "Adaptive" : "Ready",
       },
     ];
-  }, [agent.state, capabilities, livePartialEntry, session.isConnected]);
+  }, [agent.state, capabilities, currentToolingSnapshot.pipeline, livePartialEntry, session.isConnected]);
 
   const startCurrentSession = useCallback(async () => {
     try {
@@ -1360,6 +1363,11 @@ function VoiceAgentShell({ onSessionReset }: VoiceAgentShellProps) {
                               tone={toneForPipeline(item.value)}
                             />
                           </div>
+                          {"latencyMs" in item ? (
+                            <p className="mt-3 text-sm leading-7 text-[color:var(--color-text-secondary)]">
+                              Latency: {formatLatency(item.latencyMs ?? null)}
+                            </p>
+                          ) : null}
                         </div>
                       ))}
                     </div>
