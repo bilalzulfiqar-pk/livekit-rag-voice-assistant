@@ -32,6 +32,33 @@ export type VoiceSessionInfo = {
 };
 
 export type VoiceControlMode = "auto" | "push-to-talk";
+export type ToolingAnswerPath =
+  | "unknown"
+  | "normal"
+  | "knowledge_base"
+  | "weather";
+export type ToolingStatusValue = "idle" | "querying" | "success" | "failed";
+export type RagBackendState = "unknown" | "warming_up" | "ready" | "degraded";
+
+export type ToolingToolState = {
+  status: ToolingStatusValue;
+  latencyMs: number | null;
+  fallback: boolean | null;
+};
+
+export type ToolingSnapshot = {
+  type: "tooling_snapshot";
+  version: 1;
+  sequence: number;
+  sessionId: string;
+  lastAnswerPath: ToolingAnswerPath;
+  lastFallback: boolean | null;
+  ragBackend: RagBackendState;
+  knowledgeBase: ToolingToolState;
+  weather: ToolingToolState;
+};
+
+export const TOOLING_STATUS_TOPIC = "app.tooling.status";
 
 const voiceCapabilitiesSchema = z.object({
   sttModel: z.string(),
@@ -52,6 +79,24 @@ const voiceSessionInfoSchema = z.object({
   agentName: z.string(),
   startedAt: z.string(),
   transport: z.string().default("livekit"),
+});
+
+const toolingToolStateSchema = z.object({
+  status: z.enum(["idle", "querying", "success", "failed"]),
+  latencyMs: z.number().int().nonnegative().nullable(),
+  fallback: z.boolean().nullable(),
+});
+
+const toolingSnapshotSchema = z.object({
+  type: z.literal("tooling_snapshot"),
+  version: z.literal(1),
+  sequence: z.number().int().nonnegative(),
+  sessionId: z.string(),
+  lastAnswerPath: z.enum(["unknown", "normal", "knowledge_base", "weather"]),
+  lastFallback: z.boolean().nullable(),
+  ragBackend: z.enum(["unknown", "warming_up", "ready", "degraded"]),
+  knowledgeBase: toolingToolStateSchema,
+  weather: toolingToolStateSchema,
 });
 
 export const TRANSCRIPTION_FINAL_ATTRIBUTE = "lk.transcription_final";
@@ -81,4 +126,40 @@ export function parseVoiceSessionInfo(
 ): VoiceSessionInfo | null {
   const parsed = voiceSessionInfoSchema.safeParse(parseJsonString(rawValue));
   return parsed.success ? parsed.data : null;
+}
+
+export function parseToolingSnapshot(
+  rawValue: string,
+  currentSequence = -1,
+): ToolingSnapshot | null {
+  const parsed = toolingSnapshotSchema.safeParse(parseJsonString(rawValue));
+  if (!parsed.success) {
+    return null;
+  }
+
+  return parsed.data.sequence > currentSequence ? parsed.data : null;
+}
+
+export function createDefaultToolingSnapshot(
+  sessionId = "",
+): ToolingSnapshot {
+  return {
+    type: "tooling_snapshot",
+    version: 1,
+    sequence: 0,
+    sessionId,
+    lastAnswerPath: "unknown",
+    lastFallback: null,
+    ragBackend: "unknown",
+    knowledgeBase: {
+      status: "idle",
+      latencyMs: null,
+      fallback: null,
+    },
+    weather: {
+      status: "idle",
+      latencyMs: null,
+      fallback: null,
+    },
+  };
 }

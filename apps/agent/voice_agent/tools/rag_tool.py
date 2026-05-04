@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import logging
+from time import perf_counter
 
 import httpx
 from livekit.agents.llm import Toolset, function_tool
 
+from voice_agent.telemetry import VoiceAgentTelemetry
 from voice_agent.tools.text_utils import sanitize_tool_text
 
 logger = logging.getLogger("livekit-rag-voice-agent.rag-tool")
@@ -18,10 +20,12 @@ class KnowledgeBaseToolset(Toolset):
         *,
         backend_url: str,
         chat_path: str,
+        telemetry: VoiceAgentTelemetry | None = None,
         timeout_seconds: float = 6.0,
     ) -> None:
         self._backend_url = backend_url.rstrip("/")
         self._chat_path = chat_path if chat_path.startswith("/") else f"/{chat_path}"
+        self._telemetry = telemetry
         self._timeout = httpx.Timeout(
             timeout_seconds,
             connect=min(2.0, timeout_seconds),
@@ -69,7 +73,11 @@ class KnowledgeBaseToolset(Toolset):
         if not cleaned_question:
             return RAG_FAILURE_MESSAGE
 
+        if self._telemetry is not None:
+            self._telemetry.publish_kb_querying()
+
         client = await self._ensure_client()
+        start_time = perf_counter()
         try:
             response = await client.post(
                 self.endpoint_url,
@@ -83,7 +91,21 @@ class KnowledgeBaseToolset(Toolset):
             payload = response.json()
         except Exception as exc:
             logger.warning("RAG backend request failed", exc_info=exc)
+            if self._telemetry is not None:
+                self._telemetry.publish_kb_result(
+                    success=False,
+                    latency_ms=round((perf_counter() - start_time) * 1000),
+                    fallback=True,
+                )
             return RAG_FAILURE_MESSAGE
+
+        fallback_used = str(payload.get("answer_path", "")).lower() == "fallback"
+        if self._telemetry is not None:
+            self._telemetry.publish_kb_result(
+                success=True,
+                latency_ms=round((perf_counter() - start_time) * 1000),
+                fallback=fallback_used,
+            )
 
         answer = sanitize_tool_text(str(payload.get("answer", "")))
         return answer or RAG_FAILURE_MESSAGE

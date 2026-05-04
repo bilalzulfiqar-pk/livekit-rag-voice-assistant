@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import importlib
+import json
 import os
 import unittest
 from unittest.mock import AsyncMock, Mock, patch
@@ -8,6 +10,7 @@ from unittest.mock import AsyncMock, Mock, patch
 import httpx
 from livekit.agents.llm import ToolContext
 
+from voice_agent.telemetry import VoiceAgentTelemetry
 from voice_agent.tools.rag_tool import (
     KnowledgeBaseToolset,
     RAG_FAILURE_MESSAGE,
@@ -51,6 +54,81 @@ class KnowledgeBaseToolsetTests(unittest.IsolatedAsyncioTestCase):
         result = await toolset.ask_knowledge_base("What services do you offer?")
 
         self.assertEqual(result, RAG_FAILURE_MESSAGE)
+
+    async def test_ask_knowledge_base_publishes_telemetry(self) -> None:
+        telemetry = Mock()
+        toolset = KnowledgeBaseToolset(
+            backend_url="http://localhost:8000",
+            chat_path="/chat/ask",
+            telemetry=telemetry,
+        )
+        response = httpx.Response(
+            200,
+            json={"answer": "We offer support.", "answer_path": "llm"},
+            request=httpx.Request("POST", "http://localhost:8000/chat/ask"),
+        )
+        mock_client = Mock(spec=httpx.AsyncClient)
+        mock_client.post = AsyncMock(return_value=response)
+        toolset._client = mock_client
+
+        with patch("voice_agent.tools.rag_tool.perf_counter", side_effect=[10.0, 10.4]):
+            await toolset.ask_knowledge_base("What services do you offer?")
+
+        telemetry.publish_kb_querying.assert_called_once_with()
+        telemetry.publish_kb_result.assert_called_once_with(
+            success=True,
+            latency_ms=400,
+            fallback=False,
+        )
+
+    async def test_ask_knowledge_base_publishes_failure_telemetry(self) -> None:
+        telemetry = Mock()
+        toolset = KnowledgeBaseToolset(
+            backend_url="http://localhost:8000",
+            chat_path="/chat/ask",
+            telemetry=telemetry,
+        )
+        mock_client = Mock(spec=httpx.AsyncClient)
+        mock_client.post = AsyncMock(side_effect=httpx.ConnectError("boom"))
+        toolset._client = mock_client
+
+        with patch("voice_agent.tools.rag_tool.perf_counter", side_effect=[5.0, 5.25]):
+            await toolset.ask_knowledge_base("What services do you offer?")
+
+        telemetry.publish_kb_querying.assert_called_once_with()
+        telemetry.publish_kb_result.assert_called_once_with(
+            success=False,
+            latency_ms=250,
+            fallback=True,
+        )
+
+    async def test_ask_knowledge_base_marks_backend_fallback_in_telemetry(self) -> None:
+        telemetry = Mock()
+        toolset = KnowledgeBaseToolset(
+            backend_url="http://localhost:8000",
+            chat_path="/chat/ask",
+            telemetry=telemetry,
+        )
+        response = httpx.Response(
+            200,
+            json={
+                "answer": "I don't have enough information to answer that right now.",
+                "answer_path": "fallback",
+            },
+            request=httpx.Request("POST", "http://localhost:8000/chat/ask"),
+        )
+        mock_client = Mock(spec=httpx.AsyncClient)
+        mock_client.post = AsyncMock(return_value=response)
+        toolset._client = mock_client
+
+        with patch("voice_agent.tools.rag_tool.perf_counter", side_effect=[8.0, 8.15]):
+            await toolset.ask_knowledge_base("What services do you offer?")
+
+        telemetry.publish_kb_result.assert_called_once_with(
+            success=True,
+            latency_ms=150,
+            fallback=True,
+        )
 
 
 class WeatherToolsetTests(unittest.IsolatedAsyncioTestCase):
@@ -112,6 +190,65 @@ class WeatherToolsetTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result, WEATHER_FAILURE_MESSAGE)
 
+    async def test_get_current_weather_publishes_telemetry(self) -> None:
+        telemetry = Mock()
+        toolset = WeatherToolset(telemetry=telemetry)
+        geocode_response = httpx.Response(
+            200,
+            json={
+                "results": [
+                    {
+                        "name": "Lahore",
+                        "admin1": "Punjab",
+                        "country": "Pakistan",
+                        "latitude": 31.55,
+                        "longitude": 74.34,
+                    }
+                ]
+            },
+            request=httpx.Request("GET", "https://geocoding-api.open-meteo.com"),
+        )
+        weather_response = httpx.Response(
+            200,
+            json={"current": {"temperature_2m": 31.2, "weather_code": 1}},
+            request=httpx.Request("GET", "https://api.open-meteo.com"),
+        )
+        mock_client = Mock(spec=httpx.AsyncClient)
+        mock_client.get = AsyncMock(side_effect=[geocode_response, weather_response])
+        toolset._client = mock_client
+
+        with patch("voice_agent.tools.weather_tool.perf_counter", side_effect=[20.0, 20.3]):
+            await toolset.get_current_weather("Lahore")
+
+        telemetry.publish_weather_querying.assert_called_once_with()
+        telemetry.publish_weather_result.assert_called_once_with(
+            success=True,
+            latency_ms=300,
+            fallback=False,
+        )
+
+    async def test_get_current_weather_unknown_city_publishes_failure_telemetry(self) -> None:
+        telemetry = Mock()
+        toolset = WeatherToolset(telemetry=telemetry)
+        geocode_response = httpx.Response(
+            200,
+            json={"results": []},
+            request=httpx.Request("GET", "https://geocoding-api.open-meteo.com"),
+        )
+        mock_client = Mock(spec=httpx.AsyncClient)
+        mock_client.get = AsyncMock(return_value=geocode_response)
+        toolset._client = mock_client
+
+        with patch("voice_agent.tools.weather_tool.perf_counter", side_effect=[20.0, 20.2]):
+            await toolset.get_current_weather("Unknown City")
+
+        telemetry.publish_weather_querying.assert_called_once_with()
+        telemetry.publish_weather_result.assert_called_once_with(
+            success=False,
+            latency_ms=200,
+            fallback=True,
+        )
+
 
 class AgentRegistrationTests(unittest.TestCase):
     def test_voice_agent_registers_rag_and_weather_tools(self) -> None:
@@ -132,3 +269,115 @@ class AgentRegistrationTests(unittest.TestCase):
         function_tools = ToolContext(agent.tools).function_tools
         self.assertIn("ask_knowledge_base", function_tools)
         self.assertIn("get_current_weather", function_tools)
+
+
+class VoiceAgentTelemetryTests(unittest.IsolatedAsyncioTestCase):
+    def test_publish_initial_state_uses_idle_defaults(self) -> None:
+        messages: list[dict[str, object]] = []
+        telemetry = VoiceAgentTelemetry(
+            session_id="room-123",
+            rag_backend_url="http://localhost:8000",
+            publisher=lambda payload: messages.append(json.loads(payload)),
+        )
+
+        telemetry.publish_initial_state()
+
+        self.assertEqual(messages[-1]["ragBackend"], "warming_up")
+        self.assertEqual(messages[-1]["lastAnswerPath"], "unknown")
+        self.assertEqual(messages[-1]["lastFallback"], None)
+        self.assertEqual(messages[-1]["knowledgeBase"], {"status": "idle", "latencyMs": None, "fallback": None})
+        self.assertEqual(messages[-1]["weather"], {"status": "idle", "latencyMs": None, "fallback": None})
+
+    async def test_startup_ready_probe_publishes_ready(self) -> None:
+        probe = AsyncMock(return_value=True)
+        messages: list[dict[str, object]] = []
+        telemetry = VoiceAgentTelemetry(
+            session_id="room-123",
+            rag_backend_url="http://localhost:8000",
+            publisher=lambda payload: messages.append(json.loads(payload)),
+            readiness_probe=probe,
+        )
+        telemetry.publish_initial_state()
+
+        await telemetry.publish_startup_ready_state()
+
+        self.assertEqual(messages[-1]["ragBackend"], "ready")
+        probe.assert_awaited_once_with("http://localhost:8000/ready")
+
+    async def test_publish_initial_state_supports_async_publishers(self) -> None:
+        messages: list[dict[str, object]] = []
+
+        async def publisher(payload: str) -> None:
+            messages.append(json.loads(payload))
+
+        telemetry = VoiceAgentTelemetry(
+            session_id="room-123",
+            rag_backend_url="http://localhost:8000",
+            publisher=publisher,
+        )
+
+        telemetry.publish_initial_state()
+        await asyncio.sleep(0)
+
+        self.assertEqual(messages[-1]["ragBackend"], "warming_up")
+
+    async def test_startup_ready_probe_publishes_degraded(self) -> None:
+        messages: list[dict[str, object]] = []
+        telemetry = VoiceAgentTelemetry(
+            session_id="room-123",
+            rag_backend_url="http://localhost:8000",
+            publisher=lambda payload: messages.append(json.loads(payload)),
+            readiness_probe=AsyncMock(return_value=False),
+        )
+        telemetry.publish_initial_state()
+
+        await telemetry.publish_startup_ready_state()
+
+        self.assertEqual(messages[-1]["ragBackend"], "degraded")
+
+    def test_mark_normal_reply_requires_generate_reply(self) -> None:
+        messages: list[dict[str, object]] = []
+        telemetry = VoiceAgentTelemetry(
+            session_id="room-123",
+            rag_backend_url="http://localhost:8000",
+            publisher=lambda payload: messages.append(json.loads(payload)),
+        )
+
+        telemetry.start_user_turn()
+        telemetry.mark_normal_reply("say")
+        self.assertEqual(messages, [])
+
+        telemetry.start_user_turn()
+        telemetry.mark_normal_reply("generate_reply")
+        self.assertEqual(messages[-1]["lastAnswerPath"], "normal")
+        self.assertEqual(messages[-1]["lastFallback"], False)
+
+    def test_multi_tool_summary_follows_last_executed_tool(self) -> None:
+        messages: list[dict[str, object]] = []
+        telemetry = VoiceAgentTelemetry(
+            session_id="room-123",
+            rag_backend_url="http://localhost:8000",
+            publisher=lambda payload: messages.append(json.loads(payload)),
+        )
+
+        telemetry.publish_kb_result(success=True, latency_ms=180, fallback=False)
+        telemetry.publish_weather_result(success=False, latency_ms=240, fallback=True)
+        telemetry.start_user_turn()
+        telemetry.mark_tool_turn("ask_knowledge_base")
+        telemetry.mark_tool_turn("get_current_weather")
+
+        self.assertEqual(messages[-1]["lastAnswerPath"], "weather")
+        self.assertEqual(messages[-1]["lastFallback"], True)
+
+    def test_kb_success_restores_rag_backend_ready(self) -> None:
+        telemetry = VoiceAgentTelemetry(
+            session_id="room-123",
+            rag_backend_url="http://localhost:8000",
+            publisher=lambda payload: None,
+        )
+
+        telemetry.publish_kb_result(success=False, latency_ms=210, fallback=True)
+        self.assertEqual(telemetry.snapshot.rag_backend, "degraded")
+
+        telemetry.publish_kb_result(success=True, latency_ms=190, fallback=False)
+        self.assertEqual(telemetry.snapshot.rag_backend, "ready")

@@ -37,15 +37,19 @@ import {
   Volume2,
   Waves,
 } from "lucide-react";
-import { ConnectionState, Room, TokenSource } from "livekit-client";
+import { ConnectionState, Room, RoomEvent, TokenSource } from "livekit-client";
 
 import { SessionTranscript } from "@/components/session-transcript";
 import { StatusChip } from "@/components/status-chip";
 import { VoiceOrb } from "@/components/voice-orb";
 import {
+  createDefaultToolingSnapshot,
+  parseToolingSnapshot,
   parseVoiceCapabilities,
   parseVoiceSessionInfo,
+  TOOLING_STATUS_TOPIC,
   type TranscriptEntry,
+  type ToolingSnapshot,
   type VoiceCapabilities,
   type VoiceControlMode,
 } from "@/lib/voice";
@@ -281,6 +285,86 @@ function pipelineCardToneClass(value: string) {
   }
 }
 
+function toolingStatusLabel(status: ToolingSnapshot["knowledgeBase"]["status"]) {
+  switch (status) {
+    case "querying":
+      return "Querying";
+    case "success":
+      return "Success";
+    case "failed":
+      return "Failed";
+    default:
+      return "Idle";
+  }
+}
+
+function toolingStatusTone(
+  status: ToolingSnapshot["knowledgeBase"]["status"],
+): "neutral" | "live" | "success" | "warn" {
+  switch (status) {
+    case "querying":
+      return "live";
+    case "success":
+      return "success";
+    case "failed":
+      return "warn";
+    default:
+      return "neutral";
+  }
+}
+
+function answerPathLabel(answerPath: ToolingSnapshot["lastAnswerPath"]) {
+  switch (answerPath) {
+    case "knowledge_base":
+      return "Knowledge Base";
+    case "weather":
+      return "Weather";
+    case "normal":
+      return "Normal";
+    default:
+      return "Waiting";
+  }
+}
+
+function ragBackendLabel(ragBackend: ToolingSnapshot["ragBackend"]) {
+  switch (ragBackend) {
+    case "warming_up":
+      return "Warming up";
+    case "ready":
+      return "Ready";
+    case "degraded":
+      return "Degraded";
+    default:
+      return "Unknown";
+  }
+}
+
+function ragBackendTone(
+  ragBackend: ToolingSnapshot["ragBackend"],
+): "neutral" | "live" | "success" | "warn" {
+  switch (ragBackend) {
+    case "warming_up":
+      return "live";
+    case "ready":
+      return "success";
+    case "degraded":
+      return "warn";
+    default:
+      return "neutral";
+  }
+}
+
+function fallbackLabel(fallback: boolean | null) {
+  if (fallback == null) {
+    return "Waiting";
+  }
+  return fallback ? "Yes" : "No";
+}
+
+function formatLatency(latencyMs: number | null) {
+  return latencyMs == null ? "Awaiting" : `${latencyMs} ms`;
+}
+
 function AuralisLogoMark() {
   return (
     <div className="auralis-logo-mark" aria-hidden="true">
@@ -310,6 +394,7 @@ function VoiceAgentShell({ onSessionReset }: VoiceAgentShellProps) {
   const [isPressingToTalk, setIsPressingToTalk] = useState(false);
   const [isDebugOpen, setIsDebugOpen] = useState(false);
   const [isSystemStatusOpen, setIsSystemStatusOpen] = useState(false);
+  const [toolingSnapshot, setToolingSnapshot] = useState<ToolingSnapshot | null>(null);
   const [interruptedIds, setInterruptedIds] = useState<string[]>([]);
   const [liveTranscriptIds, setLiveTranscriptIds] = useState<string[]>([]);
   const [needsFreshSession, setNeedsFreshSession] = useState(false);
@@ -365,6 +450,10 @@ function VoiceAgentShell({ onSessionReset }: VoiceAgentShellProps) {
     () => parseVoiceSessionInfo(agentAttributes?.["app.voice.session"]),
     [agentAttributes],
   );
+  const currentToolingSnapshot = useMemo(
+    () => toolingSnapshot ?? createDefaultToolingSnapshot(sessionInfo?.sessionId ?? roomName),
+    [roomName, sessionInfo?.sessionId, toolingSnapshot],
+  );
 
   function resetTranscriptState() {
     for (const timerId of transcriptTimersRef.current.values()) {
@@ -374,6 +463,7 @@ function VoiceAgentShell({ onSessionReset }: VoiceAgentShellProps) {
     previousTranscriptTextsRef.current.clear();
     setInterruptedIds([]);
     setLiveTranscriptIds([]);
+    setToolingSnapshot(null);
     previousAgentStateRef.current = "disconnected";
     recentSpeakingAssistantIdRef.current = null;
     recentSpeakingTimestampRef.current = 0;
@@ -583,6 +673,40 @@ function VoiceAgentShell({ onSessionReset }: VoiceAgentShellProps) {
       cancelled = true;
     };
   }, [desiredMicEnabled, session.isConnected, session.room.localParticipant]);
+
+  useEffect(() => {
+    const room = session.room;
+    const agentIdentity = agent.internal.agentParticipant?.identity;
+    const decoder = new TextDecoder();
+
+    function handleDataReceived(
+      payload: Uint8Array,
+      participant?: { identity?: string },
+      _kind?: unknown,
+      topic?: string,
+    ) {
+      if (topic !== TOOLING_STATUS_TOPIC) {
+        return;
+      }
+      if (agentIdentity && participant?.identity && participant.identity !== agentIdentity) {
+        return;
+      }
+
+      const rawPayload = decoder.decode(payload);
+      setToolingSnapshot((currentValue) => {
+        const nextValue = parseToolingSnapshot(
+          rawPayload,
+          currentValue?.sequence ?? -1,
+        );
+        return nextValue ?? currentValue;
+      });
+    }
+
+    room.on(RoomEvent.DataReceived, handleDataReceived);
+    return () => {
+      room.off(RoomEvent.DataReceived, handleDataReceived);
+    };
+  }, [agent.internal.agentParticipant?.identity, session.room]);
 
   const pipelineItems = useMemo(() => {
     const currentCapabilities: VoiceCapabilities = capabilities ?? {
@@ -1238,6 +1362,79 @@ function VoiceAgentShell({ onSessionReset }: VoiceAgentShellProps) {
                           </div>
                         </div>
                       ))}
+                    </div>
+
+                    <div className="mt-5 grid gap-3 lg:grid-cols-3">
+                      <div className="rounded-[1.2rem] border border-white/10 bg-white/[0.04] px-4 py-4">
+                        <div className="flex items-center gap-2 text-[color:var(--color-primary)]">
+                          <Settings2 className="h-4 w-4" />
+                          <p className="text-sm font-semibold text-[color:var(--color-text-primary)]">
+                            Tooling / Grounding
+                          </p>
+                        </div>
+                        <div className="mt-4 flex flex-wrap gap-2">
+                          <StatusChip
+                            label={answerPathLabel(currentToolingSnapshot.lastAnswerPath)}
+                            tone={
+                              currentToolingSnapshot.lastAnswerPath === "normal"
+                                ? "accent"
+                                : currentToolingSnapshot.lastAnswerPath === "unknown"
+                                  ? "neutral"
+                                  : "success"
+                            }
+                          />
+                          <StatusChip
+                            label={`Fallback ${fallbackLabel(currentToolingSnapshot.lastFallback)}`}
+                            tone={
+                              currentToolingSnapshot.lastFallback == null
+                                ? "neutral"
+                                : currentToolingSnapshot.lastFallback
+                                  ? "warn"
+                                  : "success"
+                            }
+                          />
+                          <StatusChip
+                            label={`RAG ${ragBackendLabel(currentToolingSnapshot.ragBackend)}`}
+                            tone={ragBackendTone(currentToolingSnapshot.ragBackend)}
+                          />
+                        </div>
+                      </div>
+
+                      <div className="rounded-[1.2rem] border border-white/10 bg-white/[0.04] px-4 py-4">
+                        <div className="flex items-center gap-2 text-[color:var(--color-cyan)]">
+                          <ShieldCheck className="h-4 w-4" />
+                          <p className="text-sm font-semibold text-[color:var(--color-text-primary)]">
+                            Knowledge base
+                          </p>
+                        </div>
+                        <div className="mt-4">
+                          <StatusChip
+                            label={toolingStatusLabel(currentToolingSnapshot.knowledgeBase.status)}
+                            tone={toolingStatusTone(currentToolingSnapshot.knowledgeBase.status)}
+                          />
+                        </div>
+                        <p className="mt-3 text-sm leading-7 text-[color:var(--color-text-secondary)]">
+                          Last KB latency: {formatLatency(currentToolingSnapshot.knowledgeBase.latencyMs)}
+                        </p>
+                      </div>
+
+                      <div className="rounded-[1.2rem] border border-white/10 bg-white/[0.04] px-4 py-4">
+                        <div className="flex items-center gap-2 text-[color:var(--color-accent)]">
+                          <Waves className="h-4 w-4" />
+                          <p className="text-sm font-semibold text-[color:var(--color-text-primary)]">
+                            Weather tool
+                          </p>
+                        </div>
+                        <div className="mt-4">
+                          <StatusChip
+                            label={toolingStatusLabel(currentToolingSnapshot.weather.status)}
+                            tone={toolingStatusTone(currentToolingSnapshot.weather.status)}
+                          />
+                        </div>
+                        <p className="mt-3 text-sm leading-7 text-[color:var(--color-text-secondary)]">
+                          Last weather latency: {formatLatency(currentToolingSnapshot.weather.latencyMs)}
+                        </p>
+                      </div>
                     </div>
 
                     <div className="mt-5 grid gap-3 md:grid-cols-3">

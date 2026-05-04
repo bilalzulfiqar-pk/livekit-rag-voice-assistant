@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 
@@ -20,6 +21,7 @@ from livekit.plugins.turn_detector.multilingual import MultilingualModel
 
 from voice_agent.config import Settings
 from voice_agent.models import VoiceCapabilities, VoiceSessionInfo
+from voice_agent.telemetry import TOOLING_STATUS_TOPIC, VoiceAgentTelemetry
 from voice_agent.tools import KnowledgeBaseToolset, WeatherToolset
 
 load_dotenv()
@@ -67,15 +69,16 @@ server.setup_fnc = prewarm
 
 
 class AuralisVoiceAgent(Agent):
-    def __init__(self) -> None:
+    def __init__(self, *, telemetry: VoiceAgentTelemetry | None = None) -> None:
         super().__init__(
             instructions=SYSTEM_INSTRUCTIONS,
             tools=[
                 KnowledgeBaseToolset(
                     backend_url=settings.rag_backend_url,
                     chat_path=settings.rag_chat_path,
+                    telemetry=telemetry,
                 ),
-                WeatherToolset(),
+                WeatherToolset(telemetry=telemetry),
             ],
         )
 
@@ -102,6 +105,15 @@ async def _publish_metadata(ctx: JobContext) -> None:
 @server.rtc_session(agent_name=settings.livekit_agent_name)
 async def entrypoint(ctx: JobContext) -> None:
     turn_detector = MultilingualModel()
+    telemetry = VoiceAgentTelemetry(
+        session_id=ctx.room.name,
+        rag_backend_url=settings.rag_backend_url,
+        publisher=lambda payload: ctx.room.local_participant.publish_data(
+            payload,
+            reliable=True,
+            topic=TOOLING_STATUS_TOPIC,
+        ),
+    )
 
     session = AgentSession(
         stt=inference.STT(model=settings.stt_model),
@@ -128,14 +140,31 @@ async def entrypoint(ctx: JobContext) -> None:
     def on_user_input_transcribed(event) -> None:
         if not event.is_final:
             return
+        telemetry.start_user_turn()
         logger.info(
             "user input transcribed",
             extra={"transcript": event.transcript.strip()},
         )
 
+    @session.on("conversation_item_added")
+    def on_conversation_item_added(event) -> None:
+        item = getattr(event, "item", None)
+        if getattr(item, "role", "") == "user":
+            telemetry.start_user_turn()
+
+    @session.on("function_tools_executed")
+    def on_function_tools_executed(event) -> None:
+        for function_call in getattr(event, "function_calls", []):
+            function_name = getattr(function_call, "name", "")
+            telemetry.mark_tool_turn(function_name)
+
+    @session.on("speech_created")
+    def on_speech_created(event) -> None:
+        telemetry.mark_normal_reply(getattr(event, "source", ""))
+
     await session.start(
         room=ctx.room,
-        agent=AuralisVoiceAgent(),
+        agent=AuralisVoiceAgent(telemetry=telemetry),
         room_options=room_io.RoomOptions(
             audio_input=room_io.AudioInputOptions(
                 noise_cancellation=noise_cancellation.BVC(),
@@ -145,4 +174,6 @@ async def entrypoint(ctx: JobContext) -> None:
     )
     await ctx.connect()
     await _publish_metadata(ctx)
+    telemetry.publish_initial_state()
+    asyncio.create_task(telemetry.publish_startup_ready_state())
     session.say(OPENING_MESSAGE)
