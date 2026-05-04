@@ -116,6 +116,11 @@ class VoiceAgentTelemetry:
     def start_user_turn(self) -> None:
         self._current_turn_started = True
         self._current_turn_has_tool = False
+        self._snapshot.last_answer_path = "unknown"
+        self._snapshot.last_fallback = None
+        self._snapshot.knowledge_base = ToolStatusSnapshot()
+        self._snapshot.weather = ToolStatusSnapshot()
+        self.publish_snapshot()
 
     def mark_tool_turn(self, function_name: str) -> None:
         answer_path = _tool_name_to_answer_path(function_name)

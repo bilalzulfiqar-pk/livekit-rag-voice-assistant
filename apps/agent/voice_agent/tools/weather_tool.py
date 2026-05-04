@@ -83,7 +83,8 @@ class WeatherToolset(Toolset):
 
     @function_tool(
         description=(
-            "Use this tool only to get the current weather for a named city."
+            "Use this tool only to get the current weather for a named city. "
+            "It does not support forecasts, weekly outlooks, historical weather, or alerts."
         )
     )
     async def get_current_weather(self, city: str) -> str:

@@ -345,7 +345,8 @@ class VoiceAgentTelemetryTests(unittest.IsolatedAsyncioTestCase):
 
         telemetry.start_user_turn()
         telemetry.mark_normal_reply("say")
-        self.assertEqual(messages, [])
+        self.assertEqual(len(messages), 1)
+        self.assertEqual(messages[-1]["lastAnswerPath"], "unknown")
 
         telemetry.start_user_turn()
         telemetry.mark_normal_reply("generate_reply")
@@ -360,10 +361,10 @@ class VoiceAgentTelemetryTests(unittest.IsolatedAsyncioTestCase):
             publisher=lambda payload: messages.append(json.loads(payload)),
         )
 
-        telemetry.publish_kb_result(success=True, latency_ms=180, fallback=False)
-        telemetry.publish_weather_result(success=False, latency_ms=240, fallback=True)
         telemetry.start_user_turn()
+        telemetry.publish_kb_result(success=True, latency_ms=180, fallback=False)
         telemetry.mark_tool_turn("ask_knowledge_base")
+        telemetry.publish_weather_result(success=False, latency_ms=240, fallback=True)
         telemetry.mark_tool_turn("get_current_weather")
 
         self.assertEqual(messages[-1]["lastAnswerPath"], "weather")
@@ -381,3 +382,30 @@ class VoiceAgentTelemetryTests(unittest.IsolatedAsyncioTestCase):
 
         telemetry.publish_kb_result(success=True, latency_ms=190, fallback=False)
         self.assertEqual(telemetry.snapshot.rag_backend, "ready")
+
+    def test_start_user_turn_resets_tool_states_but_keeps_backend_state(self) -> None:
+        messages: list[dict[str, object]] = []
+        telemetry = VoiceAgentTelemetry(
+            session_id="room-123",
+            rag_backend_url="http://localhost:8000",
+            publisher=lambda payload: messages.append(json.loads(payload)),
+        )
+
+        telemetry.publish_kb_result(success=True, latency_ms=427, fallback=False)
+        telemetry.publish_weather_result(success=True, latency_ms=1366, fallback=False)
+        telemetry.snapshot.rag_backend = "ready"
+        telemetry.start_user_turn()
+
+        self.assertEqual(telemetry.snapshot.last_answer_path, "unknown")
+        self.assertEqual(telemetry.snapshot.last_fallback, None)
+        self.assertEqual(
+            telemetry.snapshot.knowledge_base.to_payload(),
+            {"status": "idle", "latencyMs": None, "fallback": None},
+        )
+        self.assertEqual(
+            telemetry.snapshot.weather.to_payload(),
+            {"status": "idle", "latencyMs": None, "fallback": None},
+        )
+        self.assertEqual(telemetry.snapshot.rag_backend, "ready")
+        self.assertEqual(messages[-1]["knowledgeBase"]["status"], "idle")
+        self.assertEqual(messages[-1]["weather"]["status"], "idle")

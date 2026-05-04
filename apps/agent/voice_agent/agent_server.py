@@ -36,6 +36,8 @@ SYSTEM_INSTRUCTIONS = (
     "to three short sentences. "
     "Use ask_knowledge_base for company, FAQ, policy, support, and uploaded-document questions. "
     "Use get_current_weather only for current weather questions about a named city. "
+    "For weather, only current conditions are supported. Never offer forecasts, weekly outlooks, "
+    "historical weather, alerts, or unsupported weather features. Do not ask the user if they want a forecast. "
     "Answer general questions normally without tools. "
     "Do not claim live web browsing, email, calendar, reminders, music, file access, "
     "or unrelated external actions. "

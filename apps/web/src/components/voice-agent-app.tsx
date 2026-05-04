@@ -1414,7 +1414,7 @@ function VoiceAgentShell({ onSessionReset }: VoiceAgentShellProps) {
                           />
                         </div>
                         <p className="mt-3 text-sm leading-7 text-[color:var(--color-text-secondary)]">
-                          Last KB latency: {formatLatency(currentToolingSnapshot.knowledgeBase.latencyMs)}
+                          KB latency: {formatLatency(currentToolingSnapshot.knowledgeBase.latencyMs)}
                         </p>
                       </div>
 
@@ -1432,7 +1432,7 @@ function VoiceAgentShell({ onSessionReset }: VoiceAgentShellProps) {
                           />
                         </div>
                         <p className="mt-3 text-sm leading-7 text-[color:var(--color-text-secondary)]">
-                          Last weather latency: {formatLatency(currentToolingSnapshot.weather.latencyMs)}
+                          Weather latency: {formatLatency(currentToolingSnapshot.weather.latencyMs)}
                         </p>
                       </div>
                     </div>
