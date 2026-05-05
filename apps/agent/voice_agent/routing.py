@@ -27,6 +27,10 @@ _DOC_QUESTION_PATTERN = re.compile(
     r"what is the phone|what number|what documents|which documents)\b",
     re.IGNORECASE,
 )
+_DOC_COVERAGE_QUESTION_PATTERN = re.compile(
+    r"\b(are|is|does|do)\b.*\b(covered|cover|coverage|excluded|allowed|eligible)\b",
+    re.IGNORECASE,
+)
 _KB_FOLLOW_UP_PATTERN = re.compile(
     r"^\s*(yes|more|tell me more|what about that|and that|about that|"
     r"asking about|i mean|for that|for this|that one|this one|that|this|those|these)\b",
@@ -58,14 +62,15 @@ def decide_route(message: str, *, last_answer_path: str = "unknown") -> RouteDec
     doc_ref = bool(_DOC_REFERENCE_PATTERN.search(lowered))
     doc_topic_hits = len(_DOC_TOPIC_PATTERN.findall(lowered))
     doc_question = bool(_DOC_QUESTION_PATTERN.search(lowered))
+    coverage_question = bool(_DOC_COVERAGE_QUESTION_PATTERN.search(lowered))
 
-    if doc_ref and (doc_question or doc_topic_hits >= 1):
+    if doc_ref and (doc_question or coverage_question or doc_topic_hits >= 1):
         return RouteDecision(route="knowledge_base", reason="doc_reference")
 
     if doc_topic_hits >= 2:
         return RouteDecision(route="knowledge_base", reason="doc_topic_density")
 
-    if doc_topic_hits >= 1 and doc_question:
+    if doc_topic_hits >= 1 and (doc_question or coverage_question):
         return RouteDecision(route="knowledge_base", reason="doc_topic_question")
 
     return RouteDecision(route="auto", reason="default")

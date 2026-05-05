@@ -14,6 +14,7 @@ from app.chat.guardrails import (
 )
 from app.chat.schemas import ChatRequest
 from app.chat.service import ChatService
+from app.retrieval.manager import RetrievalManager
 from app.retrieval.schemas import RetrievalLatency, RetrievalMatch, RetrievalResponse
 
 
@@ -1589,6 +1590,63 @@ class ChatServiceLatencyTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.context_refs[0].chunk_index, 570)
         self.assertTrue(response.provider_used)
         self.assertEqual(response.answer_path, "llm")
+
+    async def test_deadline_safety_valve_preserves_support_evidence_when_signature_fails(self):
+        service = ChatService.__new__(ChatService)
+        service.session = None
+        service.retrieval_service = DeadlineSupportRetrievalService()
+        service.provider = FakeProvider()
+
+        with (
+            patch.object(ChatService, "_resolve_provider", return_value=service.provider),
+            patch("app.retrieval.manager.evidence_signature_passes", return_value=False),
+        ):
+            response = await service.ask(
+                ChatRequest(question="How fast must the plan answer a fast drug coverage decision request?")
+            )
+
+        chunk_indexes = [context_ref.chunk_index for context_ref in response.context_refs]
+        self.assertIn(543, chunk_indexes)
+        self.assertEqual(chunk_indexes[0], 543)
+        self.assertTrue(response.provider_used)
+        self.assertEqual(response.answer_path, "llm")
+
+    def test_default_fact_safety_valve_can_preserve_existing_candidate_order(self):
+        query = "How long does the traveler have to submit baggage delay documents?"
+        curated_matches = [
+            RetrievalMatch(
+                chunk_id=901,
+                document_id=31,
+                filename="guide.txt",
+                chunk_index=19,
+                chunk_text=(
+                    "You must submit the required baggage delay documents within 90 days "
+                    "of the baggage delay or as soon as reasonably possible."
+                ),
+                metadata={"support_intent": QUERY_INTENT_DEADLINE},
+                similarity_score=0.71,
+            ),
+            RetrievalMatch(
+                chunk_id=902,
+                document_id=31,
+                filename="guide.txt",
+                chunk_index=17,
+                chunk_text=(
+                    "Baggage delay must be reported to the carrier. Cameras, video recorders, "
+                    "and other electronic equipment are not covered."
+                ),
+                metadata={"support_intent": QUERY_INTENT_DEADLINE},
+                similarity_score=0.79,
+            ),
+        ]
+
+        prompt_matches = RetrievalManager._build_default_fact_prompt_matches(
+            query,
+            curated_matches,
+            preserve_order=True,
+        )
+
+        self.assertEqual([match.chunk_id for match in prompt_matches[:2]], [901, 902])
 
     async def test_broad_summary_question_clarifies_when_summary_support_is_too_weak(self):
         service = ChatService.__new__(ChatService)

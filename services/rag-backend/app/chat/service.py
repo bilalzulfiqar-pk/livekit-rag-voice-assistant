@@ -424,12 +424,21 @@ class ChatService(RetrievalManager):
         return annotated_matches
 
     @staticmethod
-    def _build_default_fact_prompt_matches(question: str, matches: list) -> list:
-        prompt_candidates = ChatService._rerank_prompt_matches(
-            question,
-            matches,
-            intent=QUERY_INTENT_DEFAULT_FACT,
-            subtype=None,
+    def _build_default_fact_prompt_matches(
+        question: str,
+        matches: list,
+        *,
+        preserve_order: bool = False,
+    ) -> list:
+        prompt_candidates = (
+            matches
+            if preserve_order
+            else ChatService._rerank_prompt_matches(
+                question,
+                matches,
+                intent=QUERY_INTENT_DEFAULT_FACT,
+                subtype=None,
+            )
         )
         return budget_chat_context(
             prompt_candidates,

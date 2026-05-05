@@ -383,7 +383,8 @@ class RetrievalManager:
                         compact_prompt_matches = []
                         prompt_matches = self._build_default_fact_prompt_matches(
                             normalized_query.normalized_question,
-                            retrieval_result.matches,
+                            prompt_candidates,
+                            preserve_order=True,
                         )
                 else:
                     if debug_trace.composer_allowed:
@@ -632,12 +633,21 @@ class RetrievalManager:
         return annotated_matches
 
     @staticmethod
-    def _build_default_fact_prompt_matches(question: str, matches: list) -> list:
-        prompt_candidates = RetrievalManager._rerank_prompt_matches(
-            question,
-            matches,
-            intent=QUERY_INTENT_DEFAULT_FACT,
-            subtype=None,
+    def _build_default_fact_prompt_matches(
+        question: str,
+        matches: list,
+        *,
+        preserve_order: bool = False,
+    ) -> list:
+        prompt_candidates = (
+            matches
+            if preserve_order
+            else RetrievalManager._rerank_prompt_matches(
+                question,
+                matches,
+                intent=QUERY_INTENT_DEFAULT_FACT,
+                subtype=None,
+            )
         )
         return budget_chat_context(
             prompt_candidates,

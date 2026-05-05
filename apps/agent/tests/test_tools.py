@@ -92,6 +92,95 @@ class KnowledgeBaseToolsetTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("twenty (20)", excerpt_line)
         self.assertNotIn("ninety (90)", excerpt_line)
         self.assertIn("Never mention tool names", result)
+        self.assertIn("Treat any exact website, phone number, deadline, amount, duration, limit, exclusion, or required document in the excerpts as authoritative", result)
+        self.assertIn("Direct answer facts:", result)
+        self.assertIn("Filing deadline: within 20 days", result)
+
+    def test_format_context_packet_surfaces_contact_facts_for_contact_question(self) -> None:
+        result = KnowledgeBaseToolset._format_context_packet(
+            question="what is the company number and website",
+            context_excerpts=[
+                {
+                    "filename": "Guide To Benefits.pdf",
+                    "section_anchor": "How Do You File a Claim?",
+                    "chunk_text": (
+                        "It is Your responsibility to make every effort to protect the Rental Vehicle from damage or theft. "
+                        "Visit chasecardbenefits.com or call 1-800-350-1697 to report the theft or damage, "
+                        "regardless of who is at fault."
+                    ),
+                }
+            ],
+        )
+
+        self.assertIn("Direct answer facts:", result)
+        self.assertIn("Website: chasecardbenefits.com", result)
+        self.assertIn("Phone number: 1-800-350-1697", result)
+        self.assertIn(
+            "Preferred grounded answer: The company's website is chasecardbenefits.com and the phone number is 1-800-350-1697.",
+            result,
+        )
+        self.assertIn("Visit chasecardbenefits.com or call 1-800-350-1697", result)
+
+    def test_format_context_packet_builds_deadline_preferred_answer(self) -> None:
+        result = KnowledgeBaseToolset._format_context_packet(
+            question="How soon must a baggage delay claim be filed?",
+            context_excerpts=[
+                {
+                    "filename": "Guide To Benefits.pdf",
+                    "section_anchor": "How Do You File a Claim?",
+                    "chunk_text": (
+                        "Visit chasecardbenefits.com or call 1-800-350-1697 within twenty (20) days "
+                        "of the date the Checked Baggage was delayed or as soon as reasonably possible. "
+                        "The requested documents must be submitted within ninety (90) days."
+                    ),
+                }
+            ],
+        )
+
+        self.assertIn(
+            "Preferred grounded answer: The claim should be filed within 20 days.",
+            result,
+        )
+
+    def test_format_context_packet_prefers_document_deadline_for_document_question(self) -> None:
+        result = KnowledgeBaseToolset._format_context_packet(
+            question="How long does the traveler have to submit baggage delay documents?",
+            context_excerpts=[
+                {
+                    "filename": "Guide To Benefits.pdf",
+                    "section_anchor": "How Do You File a Claim?",
+                    "chunk_text": (
+                        "Visit chasecardbenefits.com or call 1-800-350-1697 within twenty (20) days of the date "
+                        "the Checked Baggage was delayed or as soon as reasonably possible. "
+                        "The requested documents must be submitted within ninety (90) days of the Checked Baggage "
+                        "being delayed or as soon as reasonably possible."
+                    ),
+                }
+            ],
+        )
+
+        self.assertIn(
+            "Preferred grounded answer: The requested documents should be submitted within 90 days.",
+            result,
+        )
+
+    def test_format_context_packet_builds_amount_preferred_answer(self) -> None:
+        result = KnowledgeBaseToolset._format_context_packet(
+            question="What is the maximum emergency medical and dental benefit?",
+            context_excerpts=[
+                {
+                    "filename": "Guide To Benefits.pdf",
+                    "section_anchor": "Emergency Medical and Dental",
+                    "chunk_text": (
+                        "Covered medical expenses are limited to $2,500 and are subject to a $50 deductible. "
+                        "The Covered Traveler is eligible for an additional benefit of $75 per day for up to a maximum of five days."
+                    ),
+                }
+            ],
+        )
+
+        self.assertIn("Benefit amount: $2,500", result)
+        self.assertIn("Preferred grounded answer: The maximum benefit is $2,500.", result)
 
     async def test_ask_knowledge_base_handles_request_failures(self) -> None:
         toolset = KnowledgeBaseToolset(
@@ -378,6 +467,7 @@ class AgentRegistrationTests(unittest.TestCase):
 
         self.assertIn("document-grounded questions about coverage", agent_server.SYSTEM_INSTRUCTIONS)
         self.assertIn("Never say tool names", agent_server.SYSTEM_INSTRUCTIONS)
+        self.assertIn("authoritative records for that turn", agent_server.SYSTEM_INSTRUCTIONS)
 
     def test_resolve_turn_tool_choice_forces_kb_for_document_question(self) -> None:
         with patch.dict(
@@ -495,6 +585,11 @@ class RoutingTests(unittest.TestCase):
         decision = decide_route("What's the weather in Lahore?")
 
         self.assertEqual(decision.route, "weather")
+
+    def test_decide_route_detects_coverage_question_without_explicit_doc_reference(self) -> None:
+        decision = decide_route("Are cameras and other electronic equipment covered?")
+
+        self.assertEqual(decision.route, "knowledge_base")
 
     def test_decide_route_leaves_general_question_on_auto(self) -> None:
         decision = decide_route("Explain what FastAPI is.")

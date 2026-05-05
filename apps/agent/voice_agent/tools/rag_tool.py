@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import re
+from asyncio import sleep
 from time import perf_counter
 
 import httpx
@@ -23,6 +24,52 @@ LEGAL_NUMBER_PAIR_PATTERN = re.compile(
     rf"\b((?:{LEGAL_NUMBER_WORDS})(?:[-\s]+(?:{LEGAL_NUMBER_WORDS}))*)\s*\((\d[\d,]*)\)",
     re.IGNORECASE,
 )
+URL_PATTERN = re.compile(r"\b(?:https?://)?(?:www\.)?[a-z0-9.-]+\.[a-z]{2,}(?:/[^\s]*)?\b", re.IGNORECASE)
+PHONE_PATTERN = re.compile(r"\b(?:\+?\d[\d\s().-]{6,}\d)\b")
+MONEY_PATTERN = re.compile(r"\$\s?\d[\d,]*(?:\.\d+)?")
+DEADLINE_PATTERN = re.compile(
+    r"\b(?:within|no later than)\s+\d[\d,]*\s+(?:business\s+)?days?\b|\bas soon as reasonably possible\b",
+    re.IGNORECASE,
+)
+QUESTION_TOKEN_PATTERN = re.compile(r"[a-z0-9]+", re.IGNORECASE)
+SENTENCE_SPLIT_PATTERN = re.compile(r"(?<=[.!?])\s+")
+QUESTION_STOPWORDS = {
+    "a",
+    "an",
+    "and",
+    "are",
+    "be",
+    "can",
+    "company",
+    "do",
+    "does",
+    "for",
+    "get",
+    "have",
+    "how",
+    "i",
+    "in",
+    "is",
+    "it",
+    "long",
+    "must",
+    "number",
+    "of",
+    "on",
+    "or",
+    "soon",
+    "the",
+    "their",
+    "there",
+    "this",
+    "to",
+    "what",
+    "when",
+    "which",
+    "who",
+    "website",
+    "with",
+}
 
 
 class KnowledgeBaseToolset(Toolset):
@@ -102,16 +149,7 @@ class KnowledgeBaseToolset(Toolset):
         client = await self._ensure_client()
         start_time = perf_counter()
         try:
-            response = await client.post(
-                self.endpoint_url,
-                json={
-                    "query": cleaned_question,
-                    "top_k": 3,
-                    "include_debug": False,
-                },
-            )
-            response.raise_for_status()
-            payload = response.json()
+            payload = await self._fetch_context_payload(client, cleaned_question)
         except Exception as exc:
             logger.warning("RAG backend request failed", exc_info=exc)
             if self._telemetry is not None:
@@ -164,11 +202,14 @@ class KnowledgeBaseToolset(Toolset):
     @staticmethod
     def _format_context_packet(*, question: str, context_excerpts: list[object]) -> str:
         formatted_excerpts: list[str] = []
+        direct_facts = KnowledgeBaseToolset._extract_direct_facts(question, context_excerpts)
+        preferred_answer = KnowledgeBaseToolset._build_preferred_answer(question, direct_facts)
         for index, item in enumerate(context_excerpts[:5], start=1):
             if not isinstance(item, dict):
                 continue
             excerpt_text = sanitize_tool_text(str(item.get("chunk_text", "")))
             excerpt_text = KnowledgeBaseToolset._normalize_for_voice(excerpt_text)
+            excerpt_text = KnowledgeBaseToolset._focus_excerpt_for_question(question, excerpt_text)
             if not excerpt_text:
                 continue
             filename = sanitize_tool_text(str(item.get("filename", "") or ""))
@@ -181,18 +222,277 @@ class KnowledgeBaseToolset(Toolset):
             return RAG_NO_RECORDS_MARKER
 
         context_block = "\n".join(formatted_excerpts)
+        direct_facts_block = ""
+        if direct_facts:
+            direct_facts_block = "Direct answer facts:\n" + "\n".join(
+                f"- {fact}" for fact in direct_facts
+            ) + "\n"
+        preferred_answer_block = ""
+        if preferred_answer:
+            preferred_answer_block = f"Preferred grounded answer: {preferred_answer}\n"
         return (
             "Knowledge base retrieval result.\n"
             f"Topic hint: {question}\n"
             "Answer only from the excerpts below. Speak naturally and briefly. "
+            "The excerpts below are sufficient context for this turn unless the tool result is exactly [KB_NO_RECORDS]. "
+            "Treat any exact website, phone number, deadline, amount, duration, limit, exclusion, or required document in the excerpts as authoritative. "
+            "If a deadline or amount is stated, say that exact value directly instead of softening it into vague advice. "
             "Rewrite document wording into a conversational voice-friendly answer. "
             "If the excerpts use legal duplicated number forms like 'twenty (20)', speak only the number once, like '20'. "
             "Never mention tool names, retrieval, or tell the user to use a tool. "
             "Do not sound like you are reading a document verbatim. "
             f"If the tool result is exactly {RAG_NO_RECORDS_MARKER}, say exactly: {RAG_FALLBACK_MESSAGE}\n"
+            f"{preferred_answer_block}"
+            f"{direct_facts_block}"
             f"{context_block}"
         )
 
     @staticmethod
     def _normalize_for_voice(text: str) -> str:
         return LEGAL_NUMBER_PAIR_PATTERN.sub(lambda match: match.group(2), text)
+
+    @staticmethod
+    def _focus_excerpt_for_question(question: str, excerpt_text: str) -> str:
+        text = excerpt_text.strip()
+        if not text:
+            return ""
+
+        sentences = [segment.strip(" -") for segment in SENTENCE_SPLIT_PATTERN.split(text) if segment.strip()]
+        if len(sentences) <= 1:
+            return text
+
+        keywords = KnowledgeBaseToolset._question_keywords(question)
+        asks_contact = KnowledgeBaseToolset._question_mentions_contact(question)
+        asks_deadline = KnowledgeBaseToolset._question_mentions_deadline(question)
+        asks_documents = KnowledgeBaseToolset._question_mentions_documents(question)
+
+        scored_sentences: list[tuple[int, int, str]] = []
+        for index, sentence in enumerate(sentences):
+            lowered = sentence.lower()
+            score = 0
+            if keywords:
+                sentence_tokens = set(QUESTION_TOKEN_PATTERN.findall(lowered))
+                score += len(keywords & sentence_tokens) * 2
+            if asks_contact and (URL_PATTERN.search(sentence) or PHONE_PATTERN.search(sentence)):
+                score += 10
+            if asks_deadline and DEADLINE_PATTERN.search(sentence):
+                score += 10
+            if asks_documents and "document" in lowered:
+                score += 6
+            if "claim" in lowered and "claim" in keywords:
+                score += 3
+            if "baggage" in lowered and "baggage" in keywords:
+                score += 3
+            if "website" in keywords and URL_PATTERN.search(sentence):
+                score += 5
+            if ("phone" in keywords or "number" in keywords) and PHONE_PATTERN.search(sentence):
+                score += 5
+            if score > 0:
+                scored_sentences.append((score, index, sentence))
+
+        if not scored_sentences and (asks_contact or asks_deadline or asks_documents):
+            return ""
+
+        if not scored_sentences:
+            return text
+
+        scored_sentences.sort(key=lambda item: (-item[0], item[1]))
+        selected_indexes = sorted({index for _, index, _ in scored_sentences[:2]})
+        selected = [sentences[index] for index in selected_indexes]
+        focused = " ".join(selected).strip()
+        return focused or text
+
+    @staticmethod
+    def _extract_direct_facts(question: str, context_excerpts: list[object]) -> list[str]:
+        asks_contact = KnowledgeBaseToolset._question_mentions_contact(question)
+        asks_deadline = KnowledgeBaseToolset._question_mentions_deadline(question)
+        asks_documents = KnowledgeBaseToolset._question_mentions_documents(question)
+        asks_amount = KnowledgeBaseToolset._question_mentions_amount_or_max(question)
+
+        urls: list[str] = []
+        phones: list[str] = []
+        deadlines: list[str] = []
+        document_deadlines: list[str] = []
+        benefit_amounts: list[str] = []
+
+        for item in context_excerpts[:5]:
+            if not isinstance(item, dict):
+                continue
+            excerpt_text = sanitize_tool_text(str(item.get("chunk_text", "")))
+            excerpt_text = KnowledgeBaseToolset._normalize_for_voice(excerpt_text)
+            if not excerpt_text:
+                continue
+
+            for match in URL_PATTERN.findall(excerpt_text):
+                value = match.strip(".,;:)")
+                if value not in urls:
+                    urls.append(value)
+
+            for match in PHONE_PATTERN.findall(excerpt_text):
+                value = " ".join(match.split()).strip(".,;:")
+                if value not in phones:
+                    phones.append(value)
+
+            for sentence in SENTENCE_SPLIT_PATTERN.split(excerpt_text):
+                sentence = sentence.strip()
+                if not sentence:
+                    continue
+                sentence_lower = sentence.lower()
+                if asks_amount:
+                    for match in MONEY_PATTERN.findall(sentence):
+                        value = match.strip()
+                        if KnowledgeBaseToolset._sentence_is_amount_relevant(sentence_lower) and value not in benefit_amounts:
+                            benefit_amounts.append(value)
+                for match in DEADLINE_PATTERN.findall(sentence):
+                    value = " ".join(match.split()).strip(".,;:")
+                    if ("document" in sentence_lower or "submit" in sentence_lower) and value not in document_deadlines:
+                        document_deadlines.append(value)
+                    if ("claim" in sentence_lower or "report" in sentence_lower or "file" in sentence_lower) and value not in deadlines:
+                        deadlines.append(value)
+                    elif value not in deadlines and value not in document_deadlines:
+                        deadlines.append(value)
+
+        facts: list[str] = []
+        if asks_contact:
+            if urls:
+                facts.append(f"Website: {urls[0]}")
+            if phones:
+                facts.append(f"Phone number: {phones[0]}")
+
+        if asks_deadline:
+            if deadlines:
+                facts.append(f"Filing deadline: {KnowledgeBaseToolset._preferred_deadline(deadlines)}")
+            if asks_documents and document_deadlines:
+                facts.append(f"Document deadline: {KnowledgeBaseToolset._preferred_deadline(document_deadlines)}")
+
+        if asks_documents and document_deadlines and not any(
+            fact.startswith("Document deadline:") for fact in facts
+        ):
+            facts.append(f"Document deadline: {KnowledgeBaseToolset._preferred_deadline(document_deadlines)}")
+
+        if asks_amount and benefit_amounts:
+            facts.append(f"Benefit amount: {benefit_amounts[0]}")
+
+        return facts
+
+    @staticmethod
+    def _question_keywords(question: str) -> set[str]:
+        tokens = {
+            token.lower()
+            for token in QUESTION_TOKEN_PATTERN.findall(question.lower())
+            if len(token) > 2 and token.lower() not in QUESTION_STOPWORDS
+        }
+        return tokens
+
+    @staticmethod
+    def _question_mentions_contact(question: str) -> bool:
+        lowered = question.lower()
+        return any(keyword in lowered for keyword in ("website", "phone", "number", "contact", "call"))
+
+    @staticmethod
+    def _question_mentions_deadline(question: str) -> bool:
+        lowered = question.lower()
+        return any(keyword in lowered for keyword in ("how soon", "how long", "when", "deadline", "filed", "submit", "report"))
+
+    @staticmethod
+    def _question_mentions_documents(question: str) -> bool:
+        lowered = question.lower()
+        return any(keyword in lowered for keyword in ("document", "documents", "paperwork", "submit"))
+
+    @staticmethod
+    def _question_mentions_amount_or_max(question: str) -> bool:
+        lowered = question.lower()
+        return any(
+            keyword in lowered
+            for keyword in ("maximum", "max", "amount", "limit", "benefit", "coverage amount")
+        )
+
+    @staticmethod
+    def _preferred_deadline(values: list[str]) -> str:
+        if not values:
+            return ""
+        numeric = [value for value in values if any(char.isdigit() for char in value)]
+        if numeric:
+            return numeric[0]
+        return values[0]
+
+    @staticmethod
+    def _build_preferred_answer(question: str, direct_facts: list[str]) -> str:
+        lower_question = question.lower()
+        fact_map: dict[str, str] = {}
+        for fact in direct_facts:
+            if ":" not in fact:
+                continue
+            key, value = fact.split(":", 1)
+            fact_map[key.strip()] = value.strip()
+
+        website = fact_map.get("Website")
+        phone = fact_map.get("Phone number")
+        filing_deadline = fact_map.get("Filing deadline")
+        document_deadline = fact_map.get("Document deadline")
+        benefit_amount = fact_map.get("Benefit amount")
+
+        if website and phone:
+            return f"The company's website is {website} and the phone number is {phone}."
+        if website:
+            return f"The company's website is {website}."
+        if phone:
+            return f"The phone number is {phone}."
+        if document_deadline and any(keyword in lower_question for keyword in ("document", "documents", "paperwork", "submit")):
+            return f"The requested documents should be submitted {document_deadline}."
+        if filing_deadline and document_deadline:
+            return (
+                f"The claim should be filed {filing_deadline}, and the requested documents "
+                f"should be submitted {document_deadline}."
+            )
+        if filing_deadline:
+            return f"The claim should be filed {filing_deadline}."
+        if document_deadline:
+            return f"The requested documents should be submitted {document_deadline}."
+        if benefit_amount and any(keyword in lower_question for keyword in ("maximum", "max", "limit", "benefit amount")):
+            return f"The maximum benefit is {benefit_amount}."
+        if benefit_amount:
+            return f"The benefit amount is {benefit_amount}."
+        return ""
+
+    async def _fetch_context_payload(self, client: httpx.AsyncClient, cleaned_question: str) -> dict[str, object]:
+        last_exception: Exception | None = None
+        for attempt in range(2):
+            try:
+                response = await client.post(
+                    self.endpoint_url,
+                    json={
+                        "query": cleaned_question,
+                        "top_k": 3,
+                        "include_debug": False,
+                    },
+                )
+                response.raise_for_status()
+                payload = response.json()
+                if not isinstance(payload, dict):
+                    raise ValueError("RAG backend returned a non-object payload.")
+                return payload
+            except (httpx.TimeoutException, httpx.TransportError, ValueError) as exc:
+                last_exception = exc
+                if attempt == 0:
+                    await sleep(0.15)
+                    continue
+                raise
+
+        assert last_exception is not None
+        raise last_exception
+
+    @staticmethod
+    def _sentence_is_amount_relevant(sentence_lower: str) -> bool:
+        return any(
+            phrase in sentence_lower
+            for phrase in (
+                "limited to",
+                "maximum benefit",
+                "maximum of",
+                "up to",
+                "benefit is",
+                "benefit provides",
+                "covered medical expenses",
+            )
+        )
