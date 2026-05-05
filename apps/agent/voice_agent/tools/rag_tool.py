@@ -71,12 +71,17 @@ class KnowledgeBaseToolset(Toolset):
             "Use this tool only for company, FAQ, policy, support, and "
             "uploaded-document questions. Use it for questions about the uploaded "
             "guide or PDF too, including phrases like 'this guide' or 'this document'. "
+            "Use it for document-grounded questions about coverage, exclusions, limits, deadlines, eligibility, "
+            "required documents, claim steps, procedures, benefits, reimbursement, support details, or contact details. "
             "Use it for document-based contact details too, such as website, phone number, "
             "support number, claim number, or contact information mentioned in the uploaded guide. "
             "This tool returns retrieved document excerpts, not a final spoken answer. "
             "If the user makes a short follow-up such as 'yes', 'more', or "
             "'tell me more' right after a document answer, rewrite it into a clear "
-            "standalone question using the recent conversation topic before calling this tool."
+            "standalone question using the recent conversation topic before calling this tool. "
+            "If the user sends a short clarification or correction after a document answer, treat it as a follow-up "
+            "to the same document topic. "
+            "Never mention this tool name to the user. Call it silently."
         )
     )
     async def ask_knowledge_base(self, question: str) -> str:
@@ -181,6 +186,7 @@ class KnowledgeBaseToolset(Toolset):
             "Answer only from the excerpts below. Speak naturally and briefly. "
             "Rewrite document wording into a conversational voice-friendly answer. "
             "If the excerpts use legal duplicated number forms like 'twenty (20)', speak only the number once, like '20'. "
+            "Never mention tool names, retrieval, or tell the user to use a tool. "
             "Do not sound like you are reading a document verbatim. "
             "If they do not contain the answer, "
             f"say exactly: {RAG_FALLBACK_MESSAGE}\n"

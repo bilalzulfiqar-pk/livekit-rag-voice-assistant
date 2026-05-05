@@ -88,6 +88,7 @@ class KnowledgeBaseToolsetTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("within 90 days", excerpt_line)
         self.assertNotIn("twenty (20)", excerpt_line)
         self.assertNotIn("ninety (90)", excerpt_line)
+        self.assertIn("Never mention tool names", result)
 
     async def test_ask_knowledge_base_handles_request_failures(self) -> None:
         toolset = KnowledgeBaseToolset(
@@ -357,6 +358,23 @@ class AgentRegistrationTests(unittest.TestCase):
         function_tools = ToolContext(agent.tools).function_tools
         self.assertIn("ask_knowledge_base", function_tools)
         self.assertIn("get_current_weather", function_tools)
+
+    def test_system_instructions_cover_document_routing_and_hide_tool_names(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "LIVEKIT_URL": "wss://example.livekit.cloud",
+                "LIVEKIT_API_KEY": "key",
+                "LIVEKIT_API_SECRET": "secret",
+            },
+            clear=True,
+        ):
+            import voice_agent.agent_server as agent_server
+
+            agent_server = importlib.reload(agent_server)
+
+        self.assertIn("document-grounded questions about coverage", agent_server.SYSTEM_INSTRUCTIONS)
+        self.assertIn("Never say tool names", agent_server.SYSTEM_INSTRUCTIONS)
 
 
 class VoiceAgentTelemetryTests(unittest.IsolatedAsyncioTestCase):
