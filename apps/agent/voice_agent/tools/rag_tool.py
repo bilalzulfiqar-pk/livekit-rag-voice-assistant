@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from time import perf_counter
 
 import httpx
@@ -12,6 +13,15 @@ from voice_agent.tools.text_utils import sanitize_tool_text
 logger = logging.getLogger("livekit-rag-voice-agent.rag-tool")
 
 RAG_FALLBACK_MESSAGE = "I'm sorry, I don't have that information in my records."
+LEGAL_NUMBER_WORDS = (
+    "zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|"
+    "fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|"
+    "sixty|seventy|eighty|ninety|hundred|thousand|million|and"
+)
+LEGAL_NUMBER_PAIR_PATTERN = re.compile(
+    rf"\b((?:{LEGAL_NUMBER_WORDS})(?:[-\s]+(?:{LEGAL_NUMBER_WORDS}))*)\s*\((\d[\d,]*)\)",
+    re.IGNORECASE,
+)
 
 
 class KnowledgeBaseToolset(Toolset):
@@ -61,6 +71,8 @@ class KnowledgeBaseToolset(Toolset):
             "Use this tool only for company, FAQ, policy, support, and "
             "uploaded-document questions. Use it for questions about the uploaded "
             "guide or PDF too, including phrases like 'this guide' or 'this document'. "
+            "Use it for document-based contact details too, such as website, phone number, "
+            "support number, claim number, or contact information mentioned in the uploaded guide. "
             "This tool returns retrieved document excerpts, not a final spoken answer. "
             "If the user makes a short follow-up such as 'yes', 'more', or "
             "'tell me more' right after a document answer, rewrite it into a clear "
@@ -150,6 +162,7 @@ class KnowledgeBaseToolset(Toolset):
             if not isinstance(item, dict):
                 continue
             excerpt_text = sanitize_tool_text(str(item.get("chunk_text", "")))
+            excerpt_text = KnowledgeBaseToolset._normalize_for_voice(excerpt_text)
             if not excerpt_text:
                 continue
             filename = sanitize_tool_text(str(item.get("filename", "") or ""))
@@ -165,7 +178,15 @@ class KnowledgeBaseToolset(Toolset):
         return (
             "Knowledge base retrieval result.\n"
             f"Topic hint: {question}\n"
-            "Answer only from the excerpts below. If they do not contain the answer, "
+            "Answer only from the excerpts below. Speak naturally and briefly. "
+            "Rewrite document wording into a conversational voice-friendly answer. "
+            "If the excerpts use legal duplicated number forms like 'twenty (20)', speak only the number once, like '20'. "
+            "Do not sound like you are reading a document verbatim. "
+            "If they do not contain the answer, "
             f"say exactly: {RAG_FALLBACK_MESSAGE}\n"
             f"{context_block}"
         )
+
+    @staticmethod
+    def _normalize_for_voice(text: str) -> str:
+        return LEGAL_NUMBER_PAIR_PATTERN.sub(lambda match: match.group(2), text)

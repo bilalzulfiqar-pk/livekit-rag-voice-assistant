@@ -68,6 +68,27 @@ class KnowledgeBaseToolsetTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Services Voice agents RAG assistants", result)
         mock_client.post.assert_awaited_once()
 
+    def test_format_context_packet_normalizes_legal_number_pairs_for_voice(self) -> None:
+        result = KnowledgeBaseToolset._format_context_packet(
+            question="How soon must a lost luggage claim be filed?",
+            context_excerpts=[
+                {
+                    "filename": "Guide To Benefits.pdf",
+                    "section_anchor": "Baggage Delay Insurance",
+                    "chunk_text": (
+                        "Visit chasecardbenefits.com or call 1-800-350-1697 within twenty (20) days. "
+                        "Documents must be submitted within ninety (90) days."
+                    ),
+                }
+            ],
+        )
+        excerpt_line = result.splitlines()[-1]
+
+        self.assertIn("within 20 days", excerpt_line)
+        self.assertIn("within 90 days", excerpt_line)
+        self.assertNotIn("twenty (20)", excerpt_line)
+        self.assertNotIn("ninety (90)", excerpt_line)
+
     async def test_ask_knowledge_base_handles_request_failures(self) -> None:
         toolset = KnowledgeBaseToolset(
             backend_url="http://localhost:8000",
