@@ -9,11 +9,14 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import httpx
 from livekit.agents.llm import ToolContext
+from livekit.agents.voice.agent import ModelSettings
 
 from voice_agent.telemetry import VoiceAgentTelemetry
+from voice_agent.routing import decide_route
 from voice_agent.tools.rag_tool import (
     KnowledgeBaseToolset,
     RAG_FALLBACK_MESSAGE,
+    RAG_NO_RECORDS_MARKER,
 )
 from voice_agent.tools.weather_tool import (
     UNKNOWN_CITY_MESSAGE,
@@ -101,7 +104,7 @@ class KnowledgeBaseToolsetTests(unittest.IsolatedAsyncioTestCase):
 
         result = await toolset.ask_knowledge_base("What services do you offer?")
 
-        self.assertEqual(result, RAG_FALLBACK_MESSAGE)
+        self.assertEqual(result, RAG_NO_RECORDS_MARKER)
 
     async def test_ask_knowledge_base_publishes_telemetry(self) -> None:
         telemetry = Mock()
@@ -210,7 +213,7 @@ class KnowledgeBaseToolsetTests(unittest.IsolatedAsyncioTestCase):
         with patch("voice_agent.tools.rag_tool.perf_counter", side_effect=[8.0, 8.15]):
             result = await toolset.ask_knowledge_base("What services do you offer?")
 
-        self.assertEqual(result, RAG_FALLBACK_MESSAGE)
+        self.assertEqual(result, RAG_NO_RECORDS_MARKER)
 
         telemetry.publish_kb_result.assert_called_once_with(
             success=True,
@@ -375,6 +378,128 @@ class AgentRegistrationTests(unittest.TestCase):
 
         self.assertIn("document-grounded questions about coverage", agent_server.SYSTEM_INSTRUCTIONS)
         self.assertIn("Never say tool names", agent_server.SYSTEM_INSTRUCTIONS)
+
+    def test_resolve_turn_tool_choice_forces_kb_for_document_question(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "LIVEKIT_URL": "wss://example.livekit.cloud",
+                "LIVEKIT_API_KEY": "key",
+                "LIVEKIT_API_SECRET": "secret",
+            },
+            clear=True,
+        ):
+            import voice_agent.agent_server as agent_server
+
+            agent_server = importlib.reload(agent_server)
+
+        telemetry = Mock()
+        telemetry.current_turn_has_tool = False
+        telemetry.routing_last_answer_path = "unknown"
+        chat_ctx = agent_server.llm.ChatContext.empty()
+        chat_ctx.add_message(role="user", content="How soon must a Purchase Protection claim be filed?")
+
+        tool_choice, reason, message = agent_server._resolve_turn_tool_choice(
+            chat_ctx,
+            telemetry,
+            ModelSettings(),
+        )
+
+        self.assertEqual(
+            tool_choice,
+            {"type": "function", "function": {"name": "ask_knowledge_base"}},
+        )
+        self.assertEqual(reason, "doc_topic_question")
+        self.assertIn("Purchase Protection claim", message)
+
+    def test_resolve_turn_tool_choice_keeps_general_question_on_auto(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "LIVEKIT_URL": "wss://example.livekit.cloud",
+                "LIVEKIT_API_KEY": "key",
+                "LIVEKIT_API_SECRET": "secret",
+            },
+            clear=True,
+        ):
+            import voice_agent.agent_server as agent_server
+
+            agent_server = importlib.reload(agent_server)
+
+        telemetry = Mock()
+        telemetry.current_turn_has_tool = False
+        telemetry.routing_last_answer_path = "unknown"
+        chat_ctx = agent_server.llm.ChatContext.empty()
+        chat_ctx.add_message(role="user", content="Explain what FastAPI is.")
+
+        tool_choice, reason, _ = agent_server._resolve_turn_tool_choice(
+            chat_ctx,
+            telemetry,
+            ModelSettings(),
+        )
+
+        self.assertIsNone(tool_choice)
+        self.assertEqual(reason, "default")
+
+    def test_resolve_turn_tool_choice_stops_forcing_after_tool_runs(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "LIVEKIT_URL": "wss://example.livekit.cloud",
+                "LIVEKIT_API_KEY": "key",
+                "LIVEKIT_API_SECRET": "secret",
+            },
+            clear=True,
+        ):
+            import voice_agent.agent_server as agent_server
+
+            agent_server = importlib.reload(agent_server)
+
+        telemetry = Mock()
+        telemetry.current_turn_has_tool = True
+        telemetry.routing_last_answer_path = "knowledge_base"
+        chat_ctx = agent_server.llm.ChatContext.empty()
+        chat_ctx.add_message(role="user", content="What is the company website and number?")
+
+        tool_choice, reason, message = agent_server._resolve_turn_tool_choice(
+            chat_ctx,
+            telemetry,
+            ModelSettings(),
+        )
+
+        self.assertIsNone(tool_choice)
+        self.assertEqual(reason, "tool_already_used_this_turn")
+        self.assertIn("company website and number", message.lower())
+
+
+class RoutingTests(unittest.TestCase):
+    def test_decide_route_detects_document_question(self) -> None:
+        decision = decide_route("How long does the user have to submit documents?")
+
+        self.assertEqual(decision.route, "knowledge_base")
+
+    def test_decide_route_detects_kb_follow_up(self) -> None:
+        decision = decide_route("asking about that coverage", last_answer_path="knowledge_base")
+
+        self.assertEqual(decision.route, "knowledge_base")
+
+    def test_decide_route_detects_kb_topic_follow_up(self) -> None:
+        decision = decide_route(
+            "Are cameras and other electronic equipment covered?",
+            last_answer_path="knowledge_base",
+        )
+
+        self.assertEqual(decision.route, "knowledge_base")
+
+    def test_decide_route_detects_weather(self) -> None:
+        decision = decide_route("What's the weather in Lahore?")
+
+        self.assertEqual(decision.route, "weather")
+
+    def test_decide_route_leaves_general_question_on_auto(self) -> None:
+        decision = decide_route("Explain what FastAPI is.")
+
+        self.assertEqual(decision.route, "auto")
 
 
 class VoiceAgentTelemetryTests(unittest.IsolatedAsyncioTestCase):
@@ -586,3 +711,16 @@ class VoiceAgentTelemetryTests(unittest.IsolatedAsyncioTestCase):
             telemetry.snapshot.pipeline.to_payload(),
             {"sttLatencyMs": None, "llmLatencyMs": None, "ttsLatencyMs": None, "inputMode": "text"},
         )
+
+    def test_routing_last_answer_path_survives_new_turn_reset(self) -> None:
+        telemetry = VoiceAgentTelemetry(
+            session_id="room-123",
+            rag_backend_url="http://localhost:8000",
+            publisher=lambda payload: None,
+        )
+
+        telemetry.mark_tool_turn("ask_knowledge_base")
+        telemetry.start_user_turn()
+
+        self.assertEqual(telemetry.snapshot.last_answer_path, "unknown")
+        self.assertEqual(telemetry.routing_last_answer_path, "knowledge_base")

@@ -95,10 +95,19 @@ class VoiceAgentTelemetry:
         self._snapshot = ToolingSnapshot(session_id=session_id)
         self._current_turn_has_tool = False
         self._current_turn_started = False
+        self._latest_completed_answer_path: AnswerPathValue = "unknown"
 
     @property
     def snapshot(self) -> ToolingSnapshot:
         return self._snapshot
+
+    @property
+    def current_turn_has_tool(self) -> bool:
+        return self._current_turn_has_tool
+
+    @property
+    def routing_last_answer_path(self) -> AnswerPathValue:
+        return self._latest_completed_answer_path
 
     def publish_initial_state(self) -> None:
         self._snapshot.last_answer_path = "unknown"
@@ -155,6 +164,7 @@ class VoiceAgentTelemetry:
 
         self._current_turn_started = False
         self._current_turn_has_tool = True
+        self._latest_completed_answer_path = answer_path
         self._snapshot.last_answer_path = answer_path
         self._snapshot.last_fallback = self._fallback_for_path(answer_path)
         self.publish_snapshot()
@@ -167,6 +177,7 @@ class VoiceAgentTelemetry:
             return
 
         self._current_turn_started = False
+        self._latest_completed_answer_path = "normal"
         self._snapshot.last_answer_path = "normal"
         self._snapshot.last_fallback = False
         self.publish_snapshot()

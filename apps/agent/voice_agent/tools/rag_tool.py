@@ -13,6 +13,7 @@ from voice_agent.tools.text_utils import sanitize_tool_text
 logger = logging.getLogger("livekit-rag-voice-agent.rag-tool")
 
 RAG_FALLBACK_MESSAGE = "I'm sorry, I don't have that information in my records."
+RAG_NO_RECORDS_MARKER = "[KB_NO_RECORDS]"
 LEGAL_NUMBER_WORDS = (
     "zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|"
     "fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|"
@@ -93,7 +94,7 @@ class KnowledgeBaseToolset(Toolset):
 
         cleaned_question = question.strip()
         if not cleaned_question:
-            return RAG_FALLBACK_MESSAGE
+            return RAG_NO_RECORDS_MARKER
 
         if self._telemetry is not None:
             self._telemetry.publish_kb_querying()
@@ -120,7 +121,7 @@ class KnowledgeBaseToolset(Toolset):
                     fallback=True,
                     context_refs=[],
                 )
-            return RAG_FALLBACK_MESSAGE
+            return RAG_NO_RECORDS_MARKER
 
         raw_context_refs = payload.get("context_refs") or []
         context_refs = [
@@ -141,7 +142,7 @@ class KnowledgeBaseToolset(Toolset):
             )
 
         if not has_sufficient_context:
-            return RAG_FALLBACK_MESSAGE
+            return RAG_NO_RECORDS_MARKER
 
         return self._format_context_packet(
             question=cleaned_question,
@@ -177,7 +178,7 @@ class KnowledgeBaseToolset(Toolset):
             formatted_excerpts.append(f"{index}. [{source_label}] {excerpt_text}")
 
         if not formatted_excerpts:
-            return RAG_FALLBACK_MESSAGE
+            return RAG_NO_RECORDS_MARKER
 
         context_block = "\n".join(formatted_excerpts)
         return (
@@ -188,8 +189,7 @@ class KnowledgeBaseToolset(Toolset):
             "If the excerpts use legal duplicated number forms like 'twenty (20)', speak only the number once, like '20'. "
             "Never mention tool names, retrieval, or tell the user to use a tool. "
             "Do not sound like you are reading a document verbatim. "
-            "If they do not contain the answer, "
-            f"say exactly: {RAG_FALLBACK_MESSAGE}\n"
+            f"If the tool result is exactly {RAG_NO_RECORDS_MARKER}, say exactly: {RAG_FALLBACK_MESSAGE}\n"
             f"{context_block}"
         )
 
