@@ -21,7 +21,7 @@ A realtime AI voice assistant built with LiveKit, Next.js, FastAPI, and PostgreS
 - PostgreSQL + pgvector storage for embeddings and retrieval
 - Weather tool integration using Open-Meteo
 - Live pipeline rail and tooling/grounding status panel in the web UI
-- Full Docker Compose setup for frontend, agent, backend, and database
+- Full Docker Compose setup for frontend, agent, backend, and database, plus optional local development workflows
 
 ## Architecture
 
