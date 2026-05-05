@@ -64,8 +64,9 @@ services/rag-backend (FastAPI)
 
 Important:
 
-- `docker compose up --build` starts only `postgres` and `rag-backend`
-- you still run `apps/agent` and `apps/web` manually
+- `docker compose up --build` now starts `postgres`, `rag-backend`, `agent`, and `web`
+- the frontend container builds the Next.js app on container start so it can use the values from `apps/web/.env.local`
+- the agent container downloads its LiveKit model assets on first startup and keeps them in a named Docker volume for faster restarts
 - RAG answers can feel slower than normal chat because they add an HTTP hop plus retrieval and grounded generation
 
 ## Environment Setup
@@ -123,7 +124,7 @@ python -m venv .venv
 pip install -r requirements.txt -r requirements-test.txt
 ```
 
-## Run The Backend Services
+## Run The Full Stack
 
 From the repository root:
 
@@ -135,6 +136,8 @@ This starts:
 
 - `postgres` on `localhost:5432`
 - `rag-backend` on `localhost:8000`
+- `web` on `localhost:3000`
+- `agent` as a background LiveKit worker
 
 Useful backend URLs:
 
@@ -142,7 +145,22 @@ Useful backend URLs:
 - Readiness: [http://localhost:8000/ready](http://localhost:8000/ready)
 - Docs: [http://localhost:8000/api/v1/docs](http://localhost:8000/api/v1/docs)
 
-## Run The Voice Agent
+The first `web` startup can take a little longer because the container runs `next build` before `next start`, and the first `agent` startup may also take longer while it downloads model assets.
+
+You can stop everything with:
+
+```powershell
+docker compose down
+```
+
+To rebuild only one app after changes:
+
+```powershell
+docker compose up --build web
+docker compose up --build agent
+```
+
+## Run The Voice Agent Manually
 
 ```powershell
 cd apps/agent
@@ -154,7 +172,7 @@ python agent.py download-files
 python agent.py dev
 ```
 
-## Run The Frontend
+## Run The Frontend Manually
 
 ```powershell
 cd apps/web

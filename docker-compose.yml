@@ -33,5 +33,41 @@ services:
       timeout: 5s
       retries: 10
 
+  agent:
+    build:
+      context: ./apps/agent
+    container_name: livekit_rag_agent
+    restart: unless-stopped
+    env_file:
+      - ./apps/agent/.env
+    environment:
+      RAG_BACKEND_URL: http://rag-backend:8000
+      RAG_CONTEXT_PATH: /retrieval/context
+      RAG_CHAT_PATH: /chat/ask
+    volumes:
+      - agent_cache:/root/.cache
+    depends_on:
+      rag-backend:
+        condition: service_healthy
+
+  web:
+    build:
+      context: ./apps/web
+    container_name: livekit_rag_web
+    restart: unless-stopped
+    env_file:
+      - ./apps/web/.env.local
+    ports:
+      - "3000:3000"
+    depends_on:
+      rag-backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:3000', (res) => process.exit(res.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+
 volumes:
   postgres_data:
+  agent_cache:
