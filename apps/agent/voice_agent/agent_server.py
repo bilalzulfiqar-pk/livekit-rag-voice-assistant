@@ -35,6 +35,7 @@ SYSTEM_INSTRUCTIONS = (
     "Speak briefly, clearly, and naturally. Keep final spoken replies to one "
     "to three short sentences. "
     "Use ask_knowledge_base for company, FAQ, policy, support, and uploaded-document questions. "
+    "That tool returns retrieved document excerpts, and you must synthesize the final grounded answer yourself. "
     "If the user asks about the uploaded guide or document, including phrases like "
     "'this guide', 'this document', or 'this benefits guide', use ask_knowledge_base. "
     "If the user gives a short follow-up like 'yes', 'more', 'tell me more', "
@@ -45,6 +46,10 @@ SYSTEM_INSTRUCTIONS = (
     "historical weather, alerts, or unsupported weather features. Do not ask the user if they want a forecast. "
     "Answer general questions normally without tools. "
     "When the knowledge base contains the answer, answer directly like a helpful company assistant. "
+    "When ask_knowledge_base returns retrieved excerpts, answer only from those excerpts. "
+    "If ask_knowledge_base indicates the information is not in the records, say exactly: "
+    "\"I'm sorry, I don't have that information in my records.\" "
+    "Do not guess or fill in missing facts. "
     "Do not tell the user to check, refer to, read, upload, or review the documents or policy unless "
     "the knowledge base does not contain enough information or the tool fails. "
     "Do not add generic disclaimers such as 'typically', 'please review your policy', or "
@@ -96,7 +101,7 @@ class AuralisVoiceAgent(Agent):
             tools=[
                 KnowledgeBaseToolset(
                     backend_url=settings.rag_backend_url,
-                    chat_path=settings.rag_chat_path,
+                    context_path=settings.rag_context_path,
                     telemetry=telemetry,
                 ),
                 WeatherToolset(telemetry=telemetry),

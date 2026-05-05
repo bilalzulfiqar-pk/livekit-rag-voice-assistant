@@ -1,8 +1,6 @@
-import json
 import logging
 import re
 import time
-from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -23,40 +21,27 @@ from app.chat.guardrails import (
     QUERY_INTENT_COMPARISON,
     QUERY_INTENT_DEADLINE,
     QUERY_INTENT_DEFAULT_FACT,
-    QUERY_INTENT_DEFINITION,
     QUERY_INTENT_INCLUSION_EXCLUSION,
     QUERY_INTENT_PROCESS_EXPLANATION,
     QUERY_INTENT_RESPONSIBILITY,
-    QUERY_SUBTYPE_DEADLINE_FAST,
-    QUERY_SUBTYPE_DEADLINE_STANDARD,
     route_query,
     should_fallback_for_low_confidence,
 )
 from app.chat.prompt_builder import budget_chat_context, build_chat_prompt
-from app.chat.provider import BaseChatProvider, ChatGenerationRequest, get_chat_provider
 from app.chat.reranker import BaseChatReranker, NoopChatReranker
 from app.chat.schemas import (
     ChatContextChunk,
     ChatContextRef,
     ChatDebugCandidateSource,
     ChatDebugTrace,
-    ChatLatency,
-    ChatRequest,
-    ChatResponse,
 )
 from app.chat.types import ChatPreparationLatency, PreparedChat
 from app.core.config import settings
 from app.core.timing import elapsed_ms
-from app.retrieval.manager import RetrievalManager
-from app.retrieval.schemas import RetrievalLatency, RetrievalRequest
+from app.retrieval.schemas import RetrievalRequest
 from app.retrieval.service import RetrievalService
 
-
 logger = logging.getLogger(__name__)
-
-
-def _format_sse_event(event: str, data: dict[str, object]) -> str:
-    return f"event: {event}\ndata: {json.dumps(data)}\n\n"
 
 
 @dataclass(slots=True)
@@ -139,148 +124,397 @@ RERANK_TERM_NORMALIZATION = {
 }
 
 
-class ChatService(RetrievalManager):
+class RetrievalManager:
     def __init__(self, session: AsyncSession, reranker: BaseChatReranker | None = None) -> None:
-        super().__init__(session, reranker=reranker)
-        self.provider = get_chat_provider(settings.chat_provider)
+        self.session = session
+        self.retrieval_service = RetrievalService(session)
+        self.reranker = reranker or NoopChatReranker()
 
-    async def ask(self, payload: ChatRequest) -> ChatResponse:
+    async def prepare_context(
+        self,
+        *,
+        user_question: str,
+        top_k: int,
+        document_id: int | None = None,
+        retrieval_mode: str | None = None,
+        rerank_strategy: str | None = None,
+        include_debug: bool = False,
+        provider_display_name: str = "context-only",
+    ) -> PreparedChat:
         overall_start = time.perf_counter()
-        prepared_chat = await self.prepare_chat(payload)
-        effective_retrieval_mode = self._resolve_retrieval_mode(payload.retrieval_mode)
-        if prepared_chat.fallback_answer is not None:
-            answer = prepared_chat.fallback_answer
-            llm_generation_ms = 0.0
-        else:
-            generation_start = time.perf_counter()
-            raw_answer = await self.provider.generate_answer(self._build_generation_request(prepared_chat))
-            answer = self._finalize_generated_answer(prepared_chat, raw_answer)
-            llm_generation_ms = elapsed_ms(generation_start)
-
-        return ChatResponse(
-            question=prepared_chat.question,
-            answer=answer,
-            provider=prepared_chat.provider,
-            provider_used=self._provider_used(prepared_chat),
-            answer_path=self._answer_path(prepared_chat),
-            retrieval_mode=effective_retrieval_mode,
-            rerank_strategy=prepared_chat.debug_trace.effective_rerank_strategy if prepared_chat.debug_trace else None,
-            rerank_fallback_used=prepared_chat.debug_trace.flashrank_fallback_used if prepared_chat.debug_trace else False,
-            context_count=len(prepared_chat.context_chunks),
-            context_refs=prepared_chat.context_refs,
-            latency=ChatLatency(
-                retrieval=prepared_chat.latency.retrieval,
-                prompt_build_ms=prepared_chat.latency.prompt_build_ms,
-                preparation_ms=prepared_chat.latency.total_ms,
-                rerank_ms=prepared_chat.latency.rerank_ms,
-                llm_generation_ms=llm_generation_ms,
-                total_ms=elapsed_ms(overall_start),
-                support_retrieval_ms=prepared_chat.latency.support_retrieval_ms,
-                neighbor_retrieval_ms=prepared_chat.latency.neighbor_retrieval_ms,
-                candidate_fusion_ms=prepared_chat.latency.candidate_fusion_ms,
-            ),
-            prompt=prepared_chat.prompt if prepared_chat.include_debug else None,
-            context_chunks=prepared_chat.context_chunks if prepared_chat.include_debug else None,
-            debug_trace=prepared_chat.debug_trace if prepared_chat.include_debug else None,
+        effective_rerank_strategy = self._resolve_rerank_strategy(rerank_strategy)
+        reranker = getattr(self, "reranker", None) or NoopChatReranker()
+        normalized_query = normalize_query_text(
+            user_question,
+            cutoff=settings.chat_query_spelling_cutoff,
         )
-
-    async def stream_prepared(self, prepared_chat: PreparedChat) -> AsyncIterator[str]:
-        buffered_answer: str | None = None
-        if prepared_chat.fallback_answer is None and self._should_buffer_stream_output(prepared_chat):
-            raw_answer = await self.provider.generate_answer(self._build_generation_request(prepared_chat))
-            buffered_answer = self._finalize_generated_answer(prepared_chat, raw_answer)
-
-        metadata = {
-            "question": prepared_chat.question,
-            "provider": prepared_chat.provider,
-            "provider_used": self._provider_used(prepared_chat),
-            "answer_path": self._answer_path(prepared_chat),
-            "retrieval_mode": self._resolve_retrieval_mode(
-                getattr(prepared_chat.debug_trace, "requested_retrieval_mode", None)
-                if prepared_chat.debug_trace
-                else None
-            ),
-            "rerank_strategy": (
-                prepared_chat.debug_trace.effective_rerank_strategy if prepared_chat.debug_trace else None
-            ),
-            "rerank_fallback_used": (
-                prepared_chat.debug_trace.flashrank_fallback_used if prepared_chat.debug_trace else False
-            ),
-            "context_count": len(prepared_chat.context_chunks),
-            "context_refs": [chunk.model_dump() for chunk in prepared_chat.context_refs],
-            "latency": {
-                "retrieval": prepared_chat.latency.retrieval.model_dump(),
-                "prompt_build_ms": prepared_chat.latency.prompt_build_ms,
-                "rerank_ms": prepared_chat.latency.rerank_ms,
-                "preparation_ms": prepared_chat.latency.total_ms,
-                "support_retrieval_ms": prepared_chat.latency.support_retrieval_ms,
-                "neighbor_retrieval_ms": prepared_chat.latency.neighbor_retrieval_ms,
-                "candidate_fusion_ms": prepared_chat.latency.candidate_fusion_ms,
-            },
-        }
-        if prepared_chat.include_debug:
-            metadata["prompt"] = prepared_chat.prompt
-            metadata["context_chunks"] = [chunk.model_dump() for chunk in prepared_chat.context_chunks]
-            metadata["debug_trace"] = (
-                prepared_chat.debug_trace.model_dump() if prepared_chat.debug_trace is not None else None
+        query_route = route_query(normalized_query.normalized_question)
+        routed_intent = query_route.intent
+        debug_trace = ChatDebugTrace(
+            detected_intent=query_route.intent,
+            detected_subtype=query_route.subtype,
+            requested_retrieval_mode=retrieval_mode,
+            requested_rerank_strategy=rerank_strategy,
+            effective_rerank_strategy=effective_rerank_strategy,
+            flashrank_model=reranker.model_name,
+            support_retrieval_used=False,
+            support_retrieval_succeeded=False,
+            sparse_retrieval_used=False,
+            sparse_retrieval_succeeded=False,
+            neighbor_expansion_used=False,
+            retrieval_strategy="clarification_only"
+            if query_route.intent == QUERY_INTENT_CLARIFY_FRAGMENT
+            else "vector+lexical",
+            answer_path="clarify" if query_route.clarification_message else "llm",
+            evidence_signature_passed=False,
+            composer_allowed=is_composer_allowed(query_route),
+            composer_attempted=False,
+            composer_block_reason=None,
+            answer_policy_rejected=False,
+            fallback_path_used="clarification" if query_route.clarification_message else None,
+            candidate_sources=[],
+        )
+        if query_route.clarification_message:
+            prompt_build_start = time.perf_counter()
+            prompt = build_chat_prompt(
+                question=user_question,
+                matches=[],
+                intent=query_route.intent,
+                subtype=query_route.subtype,
+                polarity=query_route.polarity,
             )
-        yield _format_sse_event("metadata", metadata)
+            prompt_build_ms = elapsed_ms(prompt_build_start)
+            return PreparedChat(
+                question=user_question,
+                query_route=query_route,
+                system_prompt=settings.chat_system_prompt,
+                prompt=prompt,
+                provider=provider_display_name,
+                fallback_answer=query_route.clarification_message or settings.chat_clarification_response,
+                retrieval_matches=[],
+                context_refs=[],
+                context_chunks=[],
+                include_debug=include_debug,
+                debug_trace=debug_trace,
+                latency=ChatPreparationLatency(
+                    retrieval=self._empty_retrieval_latency(),
+                    prompt_build_ms=prompt_build_ms,
+                    rerank_ms=0.0,
+                    total_ms=elapsed_ms(overall_start),
+                    support_retrieval_ms=0.0,
+                    neighbor_retrieval_ms=0.0,
+                    candidate_fusion_ms=0.0,
+                ),
+            )
 
-        if prepared_chat.fallback_answer is not None:
-            yield _format_sse_event("chunk", {"delta": prepared_chat.fallback_answer})
-            yield _format_sse_event("done", {"message": "Streaming completed."})
-            return
-
-        if buffered_answer is not None:
-            yield _format_sse_event("chunk", {"delta": buffered_answer})
-            yield _format_sse_event("done", {"message": "Streaming completed."})
-            return
-
-        async for chunk in self.provider.stream_answer(self._build_generation_request(prepared_chat)):
-            yield _format_sse_event("chunk", {"delta": chunk})
-
-        yield _format_sse_event("done", {"message": "Streaming completed."})
-
-    async def stream(self, payload: ChatRequest) -> AsyncIterator[str]:
-        prepared_chat = await self.prepare_chat(payload)
-        async for event in self.stream_prepared(prepared_chat):
-            yield event
-
-    async def prepare_chat(self, payload: ChatRequest) -> PreparedChat:
-        self.provider = self._resolve_provider(payload.provider)
-        return await super().prepare_context(
-            user_question=payload.question,
-            top_k=payload.top_k,
-            document_id=payload.document_id,
-            retrieval_mode=payload.retrieval_mode,
-            rerank_strategy=payload.rerank_strategy,
-            include_debug=payload.include_debug,
-            provider_display_name=self.provider.display_name,
+        retrieval_result = await self.retrieval_service.search_for_chat(
+            RetrievalRequest(
+                query=normalized_query.normalized_question,
+                top_k=max(top_k, settings.chat_retrieval_fetch_k),
+                document_id=document_id,
+                retrieval_mode=retrieval_mode,
+            )
         )
 
-    @staticmethod
-    def _build_generation_request(prepared_chat: PreparedChat) -> ChatGenerationRequest:
-        return ChatGenerationRequest(
-            question=prepared_chat.question,
-            system_prompt=prepared_chat.system_prompt,
-            prompt=prepared_chat.prompt,
-            matches=prepared_chat.retrieval_matches,
+        support_retrieval_start = time.perf_counter()
+        support_matches = await self._load_support_matches(
+            query_route,
+            normalized_query.normalized_question,
+            document_id,
         )
+        support_retrieval_ms = elapsed_ms(support_retrieval_start)
+        support_matches = self._annotate_support_matches(query_route, support_matches)
+        support_succeeded = bool(support_matches)
+        sparse_query_builder = getattr(self.retrieval_service, "build_sparse_query_text", None)
+        sparse_query_text = (
+            sparse_query_builder(normalized_query.normalized_question)
+            if callable(sparse_query_builder)
+            else None
+        )
+        base_sparse_succeeded = any(
+            "sparse" in match.metadata.get("base_source_kinds", [])
+            for match in retrieval_result.matches
+        )
+        support_sparse_succeeded = any(
+            "sparse" in match.metadata.get("support_source_kinds", [])
+            for match in support_matches
+        )
+        if query_route.intent == QUERY_INTENT_BROAD_SUMMARY and not support_succeeded:
+            prompt_build_start = time.perf_counter()
+            prompt = build_chat_prompt(
+                question=user_question,
+                matches=[],
+                intent=query_route.intent,
+                subtype=query_route.subtype,
+                polarity=query_route.polarity,
+            )
+            prompt_build_ms = elapsed_ms(prompt_build_start)
+            debug_trace.support_retrieval_used = True
+            debug_trace.support_retrieval_succeeded = False
+            debug_trace.sparse_retrieval_used = sparse_query_text is not None
+            debug_trace.sparse_retrieval_succeeded = base_sparse_succeeded or support_sparse_succeeded
+            debug_trace.answer_path = "fallback"
+            debug_trace.fallback_path_used = "clarification_from_weak_summary"
+            debug_trace.retrieval_strategy = self._build_retrieval_strategy(
+                query_route.intent,
+                support_used=True,
+                sparse_used=debug_trace.sparse_retrieval_used,
+                neighbor_used=False,
+            )
+            return PreparedChat(
+                question=user_question,
+                query_route=query_route,
+                system_prompt=settings.chat_system_prompt,
+                prompt=prompt,
+                provider=provider_display_name,
+                fallback_answer=settings.chat_clarification_response,
+                retrieval_matches=[],
+                context_refs=[],
+                context_chunks=[],
+                include_debug=include_debug,
+                debug_trace=debug_trace,
+                latency=ChatPreparationLatency(
+                    retrieval=retrieval_result.latency,
+                    prompt_build_ms=prompt_build_ms,
+                    rerank_ms=0.0,
+                    total_ms=elapsed_ms(overall_start),
+                    support_retrieval_ms=support_retrieval_ms,
+                    neighbor_retrieval_ms=0.0,
+                    candidate_fusion_ms=0.0,
+                ),
+            )
 
-    @staticmethod
-    def _answer_path(prepared_chat: PreparedChat) -> str:
-        if prepared_chat.debug_trace is not None:
-            return prepared_chat.debug_trace.answer_path
-        return "llm" if prepared_chat.fallback_answer is None else "fallback"
+        neighbor_retrieval_ms = 0.0
+        if support_matches:
+            neighbor_retrieval_start = time.perf_counter()
+            neighbor_matches = self._annotate_support_matches(
+                query_route,
+                await self._load_neighbor_matches(query_route.intent, support_matches),
+            )
+            neighbor_retrieval_ms = elapsed_ms(neighbor_retrieval_start)
+        else:
+            neighbor_matches = []
 
-    @classmethod
-    def _provider_used(cls, prepared_chat: PreparedChat) -> bool:
-        return cls._answer_path(prepared_chat) == "llm"
+        candidate_fusion_start = time.perf_counter()
+        fused_candidates = self._fuse_candidates(
+            retrieval_result.matches,
+            support_matches,
+            neighbor_matches,
+        )
+        candidate_fusion_ms = elapsed_ms(candidate_fusion_start)
+        if query_route.intent in {
+            QUERY_INTENT_BROAD_SUMMARY,
+            QUERY_INTENT_CALCULATION_METHOD,
+            QUERY_INTENT_COMPARISON,
+            QUERY_INTENT_DEADLINE,
+            QUERY_INTENT_INCLUSION_EXCLUSION,
+            QUERY_INTENT_PROCESS_EXPLANATION,
+            QUERY_INTENT_RESPONSIBILITY,
+        } and support_matches:
+            prompt_candidate_source = self._merge_prompt_candidates(
+                support_matches,
+                [candidate.match for candidate in fused_candidates],
+            )
+            prompt_candidate_rrf = {
+                match.chunk_id: 1.0 for match in support_matches
+            } | {
+                candidate.match.chunk_id: candidate.rrf_score for candidate in fused_candidates
+            }
+        else:
+            prompt_candidate_source = [candidate.match for candidate in fused_candidates]
+            prompt_candidate_rrf = {
+                candidate.match.chunk_id: candidate.rrf_score for candidate in fused_candidates
+            }
 
-    @staticmethod
-    def _resolve_provider(provider_name: str | None) -> BaseChatProvider:
-        selected_provider = provider_name or settings.chat_provider
-        return get_chat_provider(selected_provider)
+        prompt_candidates, rerank_ms = await self._apply_prompt_reranking(
+            normalized_query.normalized_question,
+            prompt_candidate_source,
+            query_route.intent,
+            query_route.subtype,
+            prompt_candidate_rrf,
+            effective_rerank_strategy,
+            debug_trace,
+        )
+        prompt_matches = budget_chat_context(
+            prompt_candidates,
+            max_total_chars=settings.chat_context_max_chars,
+            max_chunks=settings.chat_context_max_chunks,
+            max_chars_per_chunk=settings.chat_context_per_chunk_max_chars,
+        )
+        compact_prompt_matches = prompt_matches
+        composer_answer: str | None = None
+        fallback_answer = None
+        fallback_path_used: str | None = None
+        if is_specialized_route(query_route) and prompt_matches:
+            if not support_succeeded:
+                fallback_path_used = "default_fact_safety_valve"
+                query_route = self._build_default_fact_route(query_route)
+                compact_prompt_matches = []
+                prompt_matches = self._build_default_fact_prompt_matches(
+                    normalized_query.normalized_question,
+                    retrieval_result.matches,
+                )
+            else:
+                evidence_source = self._merge_prompt_candidates(prompt_matches, support_matches)
+                if neighbor_matches:
+                    evidence_source = self._merge_prompt_candidates(evidence_source, neighbor_matches)
+                compact_prompt_matches = build_compact_evidence_matches(
+                    user_question,
+                    query_route,
+                    evidence_source,
+                    max_matches=settings.chat_context_max_chunks,
+                    max_chars_per_match=min(settings.chat_context_per_chunk_max_chars, 500),
+                )
+                evidence_signature_ok = evidence_signature_passes(
+                    user_question,
+                    query_route,
+                    compact_prompt_matches,
+                )
+                debug_trace.evidence_signature_passed = evidence_signature_ok
+                if not evidence_signature_ok:
+                    if query_route.subtype == "overview":
+                        compact_prompt_matches = []
+                        fallback_answer = settings.chat_clarification_response
+                        fallback_path_used = "clarification_from_weak_summary"
+                        debug_trace.answer_path = "fallback"
+                    else:
+                        fallback_path_used = "default_fact_safety_valve"
+                        query_route = self._build_default_fact_route(query_route)
+                        compact_prompt_matches = []
+                        prompt_matches = self._build_default_fact_prompt_matches(
+                            normalized_query.normalized_question,
+                            retrieval_result.matches,
+                        )
+                else:
+                    if debug_trace.composer_allowed:
+                        debug_trace.composer_attempted = True
+                        composer_answer = compose_answer(
+                            user_question,
+                            query_route,
+                            compact_prompt_matches,
+                        )
+                        if composer_answer:
+                            fallback_answer = composer_answer
+                            fallback_path_used = "composer"
+                            debug_trace.answer_path = "composer"
+                        else:
+                            debug_trace.composer_block_reason = "composer_returned_none"
+                    else:
+                        debug_trace.composer_block_reason = "subtype_not_allowlisted"
+
+        if query_route.intent == QUERY_INTENT_BROAD_SUMMARY and not self._has_strong_summary_support(
+            fused_candidates,
+            prompt_matches,
+        ):
+            prompt_matches = []
+            fallback_answer = settings.chat_clarification_response
+            fallback_path_used = "clarification_from_weak_summary"
+            debug_trace.answer_path = "fallback"
+        if compact_prompt_matches and fallback_answer is None:
+            prompt_matches = compact_prompt_matches
+        strong_lexical_grounding = self._has_strong_lexical_grounding(
+            normalized_query.normalized_question,
+            prompt_matches,
+        )
+        if (
+            fallback_answer is None
+            and prompt_matches
+            and not strong_lexical_grounding
+            and should_fallback_for_low_confidence(
+                prompt_matches,
+                minimum_top_score=settings.chat_min_top_similarity_score,
+                high_confidence_top_score=settings.chat_high_confidence_top_similarity_score,
+                minimum_average_score=settings.chat_min_average_similarity_score,
+                average_top_n=settings.chat_average_similarity_top_n,
+            )
+        ):
+            prompt_matches = []
+            fallback_answer = settings.chat_no_context_response
+            fallback_path_used = "low_confidence"
+            debug_trace.answer_path = "fallback"
+        prompt_build_start = time.perf_counter()
+        prompt = build_chat_prompt(
+            question=user_question,
+            matches=prompt_matches,
+            intent=query_route.intent,
+            subtype=query_route.subtype,
+            polarity=query_route.polarity,
+        )
+        context_chunks = [
+            ChatContextChunk(
+                chunk_id=match.chunk_id,
+                document_id=match.document_id,
+                filename=match.filename,
+                chunk_index=match.chunk_index,
+                chunk_text=match.chunk_text,
+                similarity_score=match.similarity_score,
+            )
+            for match in prompt_matches
+        ]
+        context_refs = [
+            ChatContextRef(
+                chunk_id=match.chunk_id,
+                document_id=match.document_id,
+                filename=match.filename,
+                chunk_index=match.chunk_index,
+                similarity_score=match.similarity_score,
+            )
+            for match in prompt_matches
+        ]
+        prompt_build_ms = elapsed_ms(prompt_build_start)
+        if not prompt_matches and fallback_answer is None:
+            fallback_answer = settings.chat_no_context_response
+            fallback_path_used = "no_context"
+            debug_trace.answer_path = "fallback"
+
+        debug_trace.support_retrieval_used = routed_intent in {
+            QUERY_INTENT_BROAD_SUMMARY,
+            QUERY_INTENT_CALCULATION_METHOD,
+            QUERY_INTENT_COMPARISON,
+            QUERY_INTENT_DEADLINE,
+            QUERY_INTENT_INCLUSION_EXCLUSION,
+            QUERY_INTENT_PROCESS_EXPLANATION,
+            QUERY_INTENT_RESPONSIBILITY,
+        }
+        debug_trace.support_retrieval_succeeded = support_succeeded
+        debug_trace.sparse_retrieval_used = sparse_query_text is not None
+        debug_trace.sparse_retrieval_succeeded = base_sparse_succeeded or support_sparse_succeeded
+        debug_trace.neighbor_expansion_used = bool(neighbor_matches)
+        debug_trace.retrieval_strategy = self._build_retrieval_strategy(
+            routed_intent,
+            support_used=debug_trace.support_retrieval_used,
+            sparse_used=debug_trace.sparse_retrieval_used,
+            neighbor_used=debug_trace.neighbor_expansion_used,
+        )
+        debug_trace.fallback_path_used = fallback_path_used
+        debug_trace.candidate_sources = self._build_debug_candidate_sources(
+            prompt_matches,
+            fused_candidates,
+        )
+        logger.debug("chat_debug_trace=%s", debug_trace.model_dump())
+
+        return PreparedChat(
+            question=user_question,
+            query_route=query_route,
+            system_prompt=settings.chat_system_prompt,
+            prompt=prompt,
+            provider=provider_display_name,
+            fallback_answer=fallback_answer,
+            retrieval_matches=prompt_matches,
+            context_refs=context_refs,
+            context_chunks=context_chunks,
+            include_debug=include_debug,
+            debug_trace=debug_trace,
+            latency=ChatPreparationLatency(
+                retrieval=retrieval_result.latency,
+                prompt_build_ms=prompt_build_ms,
+                rerank_ms=rerank_ms,
+                total_ms=elapsed_ms(overall_start),
+                support_retrieval_ms=support_retrieval_ms,
+                neighbor_retrieval_ms=neighbor_retrieval_ms,
+                candidate_fusion_ms=candidate_fusion_ms,
+            ),
+        )
 
     @staticmethod
     def _resolve_rerank_strategy(requested_strategy: str | None) -> str:
@@ -374,35 +608,6 @@ class ChatService(RetrievalManager):
         return combined_matches, rerank_ms
 
     @staticmethod
-    def _should_buffer_stream_output(prepared_chat: PreparedChat) -> bool:
-        return is_specialized_route(prepared_chat.query_route)
-
-    @staticmethod
-    def _finalize_generated_answer(prepared_chat: PreparedChat, raw_answer: str) -> str:
-        composer_answer = (
-            prepared_chat.fallback_answer
-            if prepared_chat.debug_trace is not None
-            and prepared_chat.debug_trace.answer_path == "composer"
-            else None
-        )
-        policy_outcome = apply_answer_policy(
-            raw_answer,
-            prepared_chat.query_route,
-            composer_answer=composer_answer,
-        )
-        if prepared_chat.debug_trace is not None:
-            prepared_chat.debug_trace.answer_policy_rejected = policy_outcome.rejected
-            if policy_outcome.rejected and policy_outcome.answer != raw_answer:
-                if composer_answer and policy_outcome.answer == composer_answer:
-                    prepared_chat.debug_trace.answer_path = "composer"
-                elif policy_outcome.answer in {
-                    settings.chat_clarification_response,
-                    settings.chat_no_context_response,
-                }:
-                    prepared_chat.debug_trace.answer_path = "fallback"
-        return policy_outcome.answer
-
-    @staticmethod
     def _build_default_fact_route(query_route):
         return query_route.__class__(
             intent=QUERY_INTENT_DEFAULT_FACT,
@@ -418,14 +623,17 @@ class ChatService(RetrievalManager):
                 metadata["support_subtype"] = query_route.subtype
             metadata.setdefault(
                 "cue_hits",
-                sorted(set(ChatService._extract_query_terms(query_route.normalized_question)) & ChatService._extract_chunk_terms(match.chunk_text)),
+                sorted(
+                    set(RetrievalManager._extract_query_terms(query_route.normalized_question))
+                    & RetrievalManager._extract_chunk_terms(match.chunk_text)
+                ),
             )
             annotated_matches.append(match.model_copy(update={"metadata": metadata}))
         return annotated_matches
 
     @staticmethod
     def _build_default_fact_prompt_matches(question: str, matches: list) -> list:
-        prompt_candidates = ChatService._rerank_prompt_matches(
+        prompt_candidates = RetrievalManager._rerank_prompt_matches(
             question,
             matches,
             intent=QUERY_INTENT_DEFAULT_FACT,
@@ -590,18 +798,18 @@ class ChatService(RetrievalManager):
         if len(matches) <= 1:
             return matches
 
-        query_terms = ChatService._extract_query_terms(question)
+        query_terms = RetrievalManager._extract_query_terms(question)
         if not query_terms:
             return matches
 
         rrf_scores = rrf_scores or {}
 
         def rerank_key(match):
-            support_bonus = ChatService._support_match_bonus(intent, subtype, match.metadata)
-            overlap_count = ChatService._count_term_overlap(query_terms, match.chunk_text)
-            phrase_hits = ChatService._count_phrase_hits(query_terms, match.chunk_text)
+            support_bonus = RetrievalManager._support_match_bonus(intent, subtype, match.metadata)
+            overlap_count = RetrievalManager._count_term_overlap(query_terms, match.chunk_text)
+            phrase_hits = RetrievalManager._count_phrase_hits(query_terms, match.chunk_text)
             coverage_ratio = overlap_count / len(query_terms)
-            structure_bonus = ChatService._generic_structure_bonus(match.chunk_text, match.metadata)
+            structure_bonus = RetrievalManager._generic_structure_bonus(match.chunk_text, match.metadata)
             return (
                 support_bonus,
                 phrase_hits,
@@ -620,7 +828,7 @@ class ChatService(RetrievalManager):
         normalized_terms: list[str] = []
         seen_terms: set[str] = set()
         for token in tokens:
-            normalized = ChatService._normalize_rerank_token(token)
+            normalized = RetrievalManager._normalize_rerank_token(token)
             if len(normalized) < 4 or normalized in RERANK_STOP_WORDS or normalized in seen_terms:
                 continue
             normalized_terms.append(normalized)
@@ -629,7 +837,7 @@ class ChatService(RetrievalManager):
 
     @staticmethod
     def _count_term_overlap(query_terms: list[str], chunk_text: str) -> int:
-        chunk_terms = ChatService._extract_chunk_terms(chunk_text)
+        chunk_terms = RetrievalManager._extract_chunk_terms(chunk_text)
         return len(set(query_terms) & chunk_terms)
 
     @staticmethod
@@ -638,7 +846,7 @@ class ChatService(RetrievalManager):
             return 0
 
         normalized_chunk_tokens = [
-            ChatService._normalize_rerank_token(token)
+            RetrievalManager._normalize_rerank_token(token)
             for token in re.findall(r"[a-z0-9']+", chunk_text.lower())
         ]
         normalized_chunk_tokens = [token for token in normalized_chunk_tokens if len(token) >= 4]
@@ -666,7 +874,10 @@ class ChatService(RetrievalManager):
     def _generic_structure_bonus(chunk_text: str, metadata: dict[str, object]) -> tuple[int, int, int]:
         lowered_text = chunk_text.lower()
         return (
-            int(bool(metadata.get("table_like_row") or metadata.get("label_value_row")) or bool(STRUCTURED_VALUE_PATTERN.search(chunk_text))),
+            int(
+                bool(metadata.get("table_like_row") or metadata.get("label_value_row"))
+                or bool(STRUCTURED_VALUE_PATTERN.search(chunk_text))
+            ),
             int(":" in chunk_text or "\n" in chunk_text),
             int(bool(metadata.get("heading_path")) or lowered_text.count("•") >= 2 or lowered_text.count("- ") >= 2),
         )
@@ -675,7 +886,7 @@ class ChatService(RetrievalManager):
     def _extract_chunk_terms(chunk_text: str) -> set[str]:
         chunk_terms: set[str] = set()
         for token in re.findall(r"[a-z0-9']+", chunk_text.lower()):
-            normalized = ChatService._normalize_rerank_token(token)
+            normalized = RetrievalManager._normalize_rerank_token(token)
             if len(normalized) >= 4:
                 chunk_terms.add(normalized)
         return chunk_terms
@@ -697,12 +908,12 @@ class ChatService(RetrievalManager):
         if not matches:
             return False
 
-        query_terms = ChatService._extract_query_terms(question)
+        query_terms = RetrievalManager._extract_query_terms(question)
         if not query_terms:
             return False
 
         best_overlap = max(
-            ChatService._count_term_overlap(query_terms, match.chunk_text)
+            RetrievalManager._count_term_overlap(query_terms, match.chunk_text)
             for match in matches
         )
         best_coverage_ratio = best_overlap / len(query_terms)
@@ -711,6 +922,7 @@ class ChatService(RetrievalManager):
             return best_coverage_ratio >= 1.0
 
         return best_coverage_ratio >= 0.75
+
     @staticmethod
     def _fuse_candidates(
         vector_matches: list,
@@ -866,3 +1078,14 @@ class ChatService(RetrievalManager):
             seen_chunk_ids.add(match.chunk_id)
 
         return merged_matches
+
+    @staticmethod
+    def _empty_retrieval_latency():
+        from app.retrieval.schemas import RetrievalLatency
+
+        return RetrievalLatency(
+            document_lookup_ms=None,
+            query_embedding_ms=0.0,
+            vector_search_ms=0.0,
+            total_ms=0.0,
+        )

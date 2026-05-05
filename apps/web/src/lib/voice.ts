@@ -39,11 +39,21 @@ export type ToolingAnswerPath =
   | "weather";
 export type ToolingStatusValue = "idle" | "querying" | "success" | "failed";
 export type RagBackendState = "unknown" | "warming_up" | "ready" | "degraded";
+export type ToolingContextRef = {
+  sourceId: string;
+  documentId: number;
+  filename: string;
+  chunkId: number;
+  chunkIndex: number;
+  similarityScore: number;
+  sectionAnchor: string;
+};
 
 export type ToolingToolState = {
   status: ToolingStatusValue;
   latencyMs: number | null;
   fallback: boolean | null;
+  contextRefs: ToolingContextRef[];
 };
 
 export type PipelineLatencySnapshot = {
@@ -93,6 +103,19 @@ const toolingToolStateSchema = z.object({
   status: z.enum(["idle", "querying", "success", "failed"]),
   latencyMs: z.number().int().nonnegative().nullable(),
   fallback: z.boolean().nullable(),
+  contextRefs: z
+    .array(
+      z.object({
+        sourceId: z.string(),
+        documentId: z.number().int().nonnegative(),
+        filename: z.string(),
+        chunkId: z.number().int().nonnegative(),
+        chunkIndex: z.number().int().nonnegative(),
+        similarityScore: z.number().nonnegative(),
+        sectionAnchor: z.string(),
+      }),
+    )
+    .default([]),
 });
 
 const pipelineLatencySchema = z.object({
@@ -171,11 +194,13 @@ export function createDefaultToolingSnapshot(
       status: "idle",
       latencyMs: null,
       fallback: null,
+      contextRefs: [],
     },
     weather: {
       status: "idle",
       latencyMs: null,
       fallback: null,
+      contextRefs: [],
     },
     pipeline: {
       sttLatencyMs: null,

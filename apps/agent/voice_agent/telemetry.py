@@ -25,12 +25,14 @@ class ToolStatusSnapshot:
     status: ToolStatusValue = "idle"
     latency_ms: int | None = None
     fallback: bool | None = None
+    context_refs: list[dict[str, object]] = field(default_factory=list)
 
     def to_payload(self) -> dict[str, object | None]:
         return {
             "status": self.status,
             "latencyMs": self.latency_ms,
             "fallback": self.fallback,
+            "contextRefs": self.context_refs,
         }
 
 
@@ -173,12 +175,21 @@ class VoiceAgentTelemetry:
         self._snapshot.knowledge_base.status = "querying"
         self._snapshot.knowledge_base.latency_ms = None
         self._snapshot.knowledge_base.fallback = None
+        self._snapshot.knowledge_base.context_refs = []
         self.publish_snapshot()
 
-    def publish_kb_result(self, *, success: bool, latency_ms: int, fallback: bool) -> None:
+    def publish_kb_result(
+        self,
+        *,
+        success: bool,
+        latency_ms: int,
+        fallback: bool,
+        context_refs: list[dict[str, object]] | None = None,
+    ) -> None:
         self._snapshot.knowledge_base.status = "success" if success else "failed"
         self._snapshot.knowledge_base.latency_ms = latency_ms
         self._snapshot.knowledge_base.fallback = fallback
+        self._snapshot.knowledge_base.context_refs = list(context_refs or [])
         self._snapshot.rag_backend = "ready" if success else "degraded"
 
         if self._snapshot.last_answer_path == "knowledge_base":
@@ -190,6 +201,7 @@ class VoiceAgentTelemetry:
         self._snapshot.weather.status = "querying"
         self._snapshot.weather.latency_ms = None
         self._snapshot.weather.fallback = None
+        self._snapshot.weather.context_refs = []
         self.publish_snapshot()
 
     def publish_weather_result(
@@ -202,6 +214,7 @@ class VoiceAgentTelemetry:
         self._snapshot.weather.status = "success" if success else "failed"
         self._snapshot.weather.latency_ms = latency_ms
         self._snapshot.weather.fallback = fallback
+        self._snapshot.weather.context_refs = []
 
         if self._snapshot.last_answer_path == "weather":
             self._snapshot.last_fallback = fallback

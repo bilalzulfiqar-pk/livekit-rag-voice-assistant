@@ -2,6 +2,7 @@ import unittest
 from unittest.mock import patch
 
 from app.chat.guardrails import (
+    QUERY_INTENT_CLARIFY_FRAGMENT,
     QUERY_INTENT_DEADLINE,
     QUERY_INTENT_DEFAULT_FACT,
     QUERY_INTENT_INCLUSION_EXCLUSION,

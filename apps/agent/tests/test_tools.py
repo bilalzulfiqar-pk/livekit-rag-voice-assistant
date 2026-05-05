@@ -13,7 +13,7 @@ from livekit.agents.llm import ToolContext
 from voice_agent.telemetry import VoiceAgentTelemetry
 from voice_agent.tools.rag_tool import (
     KnowledgeBaseToolset,
-    RAG_FAILURE_MESSAGE,
+    RAG_FALLBACK_MESSAGE,
 )
 from voice_agent.tools.weather_tool import (
     UNKNOWN_CITY_MESSAGE,
@@ -26,12 +26,37 @@ class KnowledgeBaseToolsetTests(unittest.IsolatedAsyncioTestCase):
     async def test_ask_knowledge_base_returns_sanitized_answer(self) -> None:
         toolset = KnowledgeBaseToolset(
             backend_url="http://localhost:8000",
-            chat_path="/chat/ask",
+            context_path="/retrieval/context",
         )
         response = httpx.Response(
             200,
-            json={"answer": "## Services\n- Voice agents\n- RAG assistants"},
-            request=httpx.Request("POST", "http://localhost:8000/chat/ask"),
+            json={
+                "has_sufficient_context": True,
+                "context_excerpts": [
+                    {
+                        "source_id": "document:1",
+                        "chunk_id": 11,
+                        "document_id": 1,
+                        "filename": "company-faq.txt",
+                        "chunk_index": 0,
+                        "similarity_score": 0.92,
+                        "section_anchor": "Services",
+                        "chunk_text": "## Services\n- Voice agents\n- RAG assistants",
+                    }
+                ],
+                "context_refs": [
+                    {
+                        "source_id": "document:1",
+                        "chunk_id": 11,
+                        "document_id": 1,
+                        "filename": "company-faq.txt",
+                        "chunk_index": 0,
+                        "similarity_score": 0.92,
+                        "section_anchor": "Services",
+                    }
+                ],
+            },
+            request=httpx.Request("POST", "http://localhost:8000/retrieval/context"),
         )
         mock_client = Mock(spec=httpx.AsyncClient)
         mock_client.post = AsyncMock(return_value=response)
@@ -39,13 +64,14 @@ class KnowledgeBaseToolsetTests(unittest.IsolatedAsyncioTestCase):
 
         result = await toolset.ask_knowledge_base("What services do you offer?")
 
-        self.assertEqual(result, "Services Voice agents RAG assistants")
+        self.assertIn("Knowledge base retrieval result.", result)
+        self.assertIn("Services Voice agents RAG assistants", result)
         mock_client.post.assert_awaited_once()
 
     async def test_ask_knowledge_base_handles_request_failures(self) -> None:
         toolset = KnowledgeBaseToolset(
             backend_url="http://localhost:8000",
-            chat_path="/chat/ask",
+            context_path="/retrieval/context",
         )
         mock_client = Mock(spec=httpx.AsyncClient)
         mock_client.post = AsyncMock(side_effect=httpx.ConnectError("boom"))
@@ -53,19 +79,44 @@ class KnowledgeBaseToolsetTests(unittest.IsolatedAsyncioTestCase):
 
         result = await toolset.ask_knowledge_base("What services do you offer?")
 
-        self.assertEqual(result, RAG_FAILURE_MESSAGE)
+        self.assertEqual(result, RAG_FALLBACK_MESSAGE)
 
     async def test_ask_knowledge_base_publishes_telemetry(self) -> None:
         telemetry = Mock()
         toolset = KnowledgeBaseToolset(
             backend_url="http://localhost:8000",
-            chat_path="/chat/ask",
+            context_path="/retrieval/context",
             telemetry=telemetry,
         )
         response = httpx.Response(
             200,
-            json={"answer": "We offer support.", "answer_path": "llm"},
-            request=httpx.Request("POST", "http://localhost:8000/chat/ask"),
+            json={
+                "has_sufficient_context": True,
+                "context_excerpts": [
+                    {
+                        "source_id": "document:1",
+                        "chunk_id": 1,
+                        "document_id": 1,
+                        "filename": "company-faq.txt",
+                        "chunk_index": 0,
+                        "similarity_score": 0.88,
+                        "section_anchor": "Support",
+                        "chunk_text": "We offer support.",
+                    }
+                ],
+                "context_refs": [
+                    {
+                        "source_id": "document:1",
+                        "chunk_id": 1,
+                        "document_id": 1,
+                        "filename": "company-faq.txt",
+                        "chunk_index": 0,
+                        "similarity_score": 0.88,
+                        "section_anchor": "Support",
+                    }
+                ],
+            },
+            request=httpx.Request("POST", "http://localhost:8000/retrieval/context"),
         )
         mock_client = Mock(spec=httpx.AsyncClient)
         mock_client.post = AsyncMock(return_value=response)
@@ -79,13 +130,24 @@ class KnowledgeBaseToolsetTests(unittest.IsolatedAsyncioTestCase):
             success=True,
             latency_ms=400,
             fallback=False,
+            context_refs=[
+                {
+                    "sourceId": "document:1",
+                    "documentId": 1,
+                    "filename": "company-faq.txt",
+                    "chunkId": 1,
+                    "chunkIndex": 0,
+                    "similarityScore": 0.88,
+                    "sectionAnchor": "Support",
+                }
+            ],
         )
 
     async def test_ask_knowledge_base_publishes_failure_telemetry(self) -> None:
         telemetry = Mock()
         toolset = KnowledgeBaseToolset(
             backend_url="http://localhost:8000",
-            chat_path="/chat/ask",
+            context_path="/retrieval/context",
             telemetry=telemetry,
         )
         mock_client = Mock(spec=httpx.AsyncClient)
@@ -100,34 +162,39 @@ class KnowledgeBaseToolsetTests(unittest.IsolatedAsyncioTestCase):
             success=False,
             latency_ms=250,
             fallback=True,
+            context_refs=[],
         )
 
-    async def test_ask_knowledge_base_marks_backend_fallback_in_telemetry(self) -> None:
+    async def test_ask_knowledge_base_marks_insufficient_context_in_telemetry(self) -> None:
         telemetry = Mock()
         toolset = KnowledgeBaseToolset(
             backend_url="http://localhost:8000",
-            chat_path="/chat/ask",
+            context_path="/retrieval/context",
             telemetry=telemetry,
         )
         response = httpx.Response(
             200,
             json={
-                "answer": "I don't have enough information to answer that right now.",
-                "answer_path": "fallback",
+                "has_sufficient_context": False,
+                "context_excerpts": [],
+                "context_refs": [],
             },
-            request=httpx.Request("POST", "http://localhost:8000/chat/ask"),
+            request=httpx.Request("POST", "http://localhost:8000/retrieval/context"),
         )
         mock_client = Mock(spec=httpx.AsyncClient)
         mock_client.post = AsyncMock(return_value=response)
         toolset._client = mock_client
 
         with patch("voice_agent.tools.rag_tool.perf_counter", side_effect=[8.0, 8.15]):
-            await toolset.ask_knowledge_base("What services do you offer?")
+            result = await toolset.ask_knowledge_base("What services do you offer?")
+
+        self.assertEqual(result, RAG_FALLBACK_MESSAGE)
 
         telemetry.publish_kb_result.assert_called_once_with(
             success=True,
             latency_ms=150,
             fallback=True,
+            context_refs=[],
         )
 
 
@@ -285,8 +352,14 @@ class VoiceAgentTelemetryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(messages[-1]["ragBackend"], "warming_up")
         self.assertEqual(messages[-1]["lastAnswerPath"], "unknown")
         self.assertEqual(messages[-1]["lastFallback"], None)
-        self.assertEqual(messages[-1]["knowledgeBase"], {"status": "idle", "latencyMs": None, "fallback": None})
-        self.assertEqual(messages[-1]["weather"], {"status": "idle", "latencyMs": None, "fallback": None})
+        self.assertEqual(
+            messages[-1]["knowledgeBase"],
+            {"status": "idle", "latencyMs": None, "fallback": None, "contextRefs": []},
+        )
+        self.assertEqual(
+            messages[-1]["weather"],
+            {"status": "idle", "latencyMs": None, "fallback": None, "contextRefs": []},
+        )
         self.assertEqual(
             messages[-1]["pipeline"],
             {"sttLatencyMs": None, "llmLatencyMs": None, "ttsLatencyMs": None, "inputMode": None},
@@ -366,7 +439,7 @@ class VoiceAgentTelemetryTests(unittest.IsolatedAsyncioTestCase):
         )
 
         telemetry.start_user_turn()
-        telemetry.publish_kb_result(success=True, latency_ms=180, fallback=False)
+        telemetry.publish_kb_result(success=True, latency_ms=180, fallback=False, context_refs=[])
         telemetry.mark_tool_turn("ask_knowledge_base")
         telemetry.publish_weather_result(success=False, latency_ms=240, fallback=True)
         telemetry.mark_tool_turn("get_current_weather")
@@ -381,11 +454,30 @@ class VoiceAgentTelemetryTests(unittest.IsolatedAsyncioTestCase):
             publisher=lambda payload: None,
         )
 
-        telemetry.publish_kb_result(success=False, latency_ms=210, fallback=True)
+        telemetry.publish_kb_result(success=False, latency_ms=210, fallback=True, context_refs=[])
         self.assertEqual(telemetry.snapshot.rag_backend, "degraded")
 
-        telemetry.publish_kb_result(success=True, latency_ms=190, fallback=False)
+        telemetry.publish_kb_result(success=True, latency_ms=190, fallback=False, context_refs=[])
         self.assertEqual(telemetry.snapshot.rag_backend, "ready")
+
+    def test_kb_result_preserves_context_refs(self) -> None:
+        telemetry = VoiceAgentTelemetry(
+            session_id="room-123",
+            rag_backend_url="http://localhost:8000",
+            publisher=lambda payload: None,
+        )
+
+        telemetry.publish_kb_result(
+            success=True,
+            latency_ms=190,
+            fallback=False,
+            context_refs=[{"sourceId": "document:12", "filename": "Guide To Benefits.pdf"}],
+        )
+
+        self.assertEqual(
+            telemetry.snapshot.knowledge_base.context_refs,
+            [{"sourceId": "document:12", "filename": "Guide To Benefits.pdf"}],
+        )
 
     def test_start_user_turn_resets_tool_states_but_keeps_backend_state(self) -> None:
         messages: list[dict[str, object]] = []
@@ -395,7 +487,12 @@ class VoiceAgentTelemetryTests(unittest.IsolatedAsyncioTestCase):
             publisher=lambda payload: messages.append(json.loads(payload)),
         )
 
-        telemetry.publish_kb_result(success=True, latency_ms=427, fallback=False)
+        telemetry.publish_kb_result(
+            success=True,
+            latency_ms=427,
+            fallback=False,
+            context_refs=[{"sourceId": "document:1"}],
+        )
         telemetry.publish_weather_result(success=True, latency_ms=1366, fallback=False)
         telemetry.snapshot.rag_backend = "ready"
         telemetry.start_user_turn()
@@ -404,11 +501,11 @@ class VoiceAgentTelemetryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(telemetry.snapshot.last_fallback, None)
         self.assertEqual(
             telemetry.snapshot.knowledge_base.to_payload(),
-            {"status": "idle", "latencyMs": None, "fallback": None},
+            {"status": "idle", "latencyMs": None, "fallback": None, "contextRefs": []},
         )
         self.assertEqual(
             telemetry.snapshot.weather.to_payload(),
-            {"status": "idle", "latencyMs": None, "fallback": None},
+            {"status": "idle", "latencyMs": None, "fallback": None, "contextRefs": []},
         )
         self.assertEqual(telemetry.snapshot.rag_backend, "ready")
         self.assertEqual(messages[-1]["knowledgeBase"]["status"], "idle")

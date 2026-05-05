@@ -11,6 +11,7 @@ DEFAULT_TTS_MODEL = "cartesia/sonic-3"
 DEFAULT_TTS_VOICE = "9626c31c-bec5-4cca-baa8-f8ba9e84c8bc"
 DEFAULT_RAG_BACKEND_URL = "http://localhost:8000"
 DEFAULT_RAG_CHAT_PATH = "/chat/ask"
+DEFAULT_RAG_CONTEXT_PATH = "/retrieval/context"
 
 
 @dataclass(slots=True)
@@ -25,6 +26,7 @@ class Settings:
     tts_voice: str = DEFAULT_TTS_VOICE
     rag_backend_url: str = DEFAULT_RAG_BACKEND_URL
     rag_chat_path: str = DEFAULT_RAG_CHAT_PATH
+    rag_context_path: str = DEFAULT_RAG_CONTEXT_PATH
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -43,6 +45,12 @@ class Settings:
         )
         if not rag_chat_path.startswith("/"):
             rag_chat_path = f"/{rag_chat_path}"
+        rag_context_path = (
+            os.getenv("RAG_CONTEXT_PATH", DEFAULT_RAG_CONTEXT_PATH).strip()
+            or DEFAULT_RAG_CONTEXT_PATH
+        )
+        if not rag_context_path.startswith("/"):
+            rag_context_path = f"/{rag_context_path}"
 
         return cls(
             livekit_url=livekit_url,
@@ -73,4 +81,5 @@ class Settings:
                 or DEFAULT_RAG_BACKEND_URL
             ).rstrip("/"),
             rag_chat_path=rag_chat_path,
+            rag_context_path=rag_context_path,
         )

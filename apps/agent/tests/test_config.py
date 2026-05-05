@@ -9,6 +9,7 @@ from voice_agent.config import (
     DEFAULT_LLM_MODEL,
     DEFAULT_RAG_BACKEND_URL,
     DEFAULT_RAG_CHAT_PATH,
+    DEFAULT_RAG_CONTEXT_PATH,
     DEFAULT_STT_MODEL,
     DEFAULT_TTS_MODEL,
     DEFAULT_TTS_VOICE,
@@ -36,6 +37,7 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(settings.tts_voice, DEFAULT_TTS_VOICE)
         self.assertEqual(settings.rag_backend_url, DEFAULT_RAG_BACKEND_URL)
         self.assertEqual(settings.rag_chat_path, DEFAULT_RAG_CHAT_PATH)
+        self.assertEqual(settings.rag_context_path, DEFAULT_RAG_CONTEXT_PATH)
 
     def test_from_env_normalizes_rag_chat_path(self) -> None:
         with patch.dict(
@@ -51,6 +53,21 @@ class SettingsTests(unittest.TestCase):
             settings = Settings.from_env()
 
         self.assertEqual(settings.rag_chat_path, "/chat/ask")
+
+    def test_from_env_normalizes_rag_context_path(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "LIVEKIT_URL": "wss://example.livekit.cloud",
+                "LIVEKIT_API_KEY": "key",
+                "LIVEKIT_API_SECRET": "secret",
+                "RAG_CONTEXT_PATH": "retrieval/context",
+            },
+            clear=True,
+        ):
+            settings = Settings.from_env()
+
+        self.assertEqual(settings.rag_context_path, "/retrieval/context")
 
     def test_from_env_requires_livekit_credentials(self) -> None:
         with patch.dict(os.environ, {}, clear=True):

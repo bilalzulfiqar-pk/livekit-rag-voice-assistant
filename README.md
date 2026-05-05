@@ -26,13 +26,15 @@ apps/web (Next.js)
 apps/agent (Python LiveKit worker)
   -> handles VAD, STT, LLM, TTS, interruptions, and text fallback
   -> decides when to call tools
-  -> ask_knowledge_base(question) -> services/rag-backend POST /chat/ask
+  -> ask_knowledge_base(question) -> services/rag-backend POST /retrieval/context
+  -> synthesizes the final grounded answer in the voice agent LLM
   -> get_current_weather(city) -> Open-Meteo APIs
 
 services/rag-backend (FastAPI)
   -> ingests text / PDF / DOCX
   -> stores embeddings in PostgreSQL + pgvector
-  -> runs retrieval and grounded chat
+  -> runs retrieval, reranking, and context preparation
+  -> keeps POST /chat/ask for backend-only testing and compatibility
 ```
 
 ## Project Structure
@@ -91,6 +93,7 @@ The new agent config includes:
 ```env
 LIVEKIT_AGENT_NAME=livekit-rag-voice-agent
 RAG_BACKEND_URL=http://localhost:8000
+RAG_CONTEXT_PATH=/retrieval/context
 RAG_CHAT_PATH=/chat/ask
 ```
 
@@ -210,4 +213,4 @@ npm run test:rag-backend
 
 - The integrated RAG backend was extracted into `services/rag-backend`, while the original source copy remains in `services/RAG_Chatbot` as a reference.
 - The voice worker uses LiveKit Inference for its normal conversational voice pipeline.
-- The RAG backend remains independently responsible for grounded chat generation.
+- The RAG backend now powers retrieval/context for the voice agent, while `/chat/ask` remains available for direct backend chat testing.
