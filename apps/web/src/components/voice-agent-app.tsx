@@ -381,13 +381,13 @@ function formatPipelineLatency(
   return formatLatency(latencyMs);
 }
 
-function AuralisLogoMark() {
+function VoiceAgentLogoMark() {
   return (
-    <div className="auralis-logo-mark" aria-hidden="true">
-      <span className="auralis-logo-ring auralis-logo-ring-outer" />
-      <span className="auralis-logo-ring auralis-logo-ring-inner" />
-      <span className="auralis-logo-core" />
-      <span className="auralis-logo-bars">
+    <div className="voice-agent-logo-mark" aria-hidden="true">
+      <span className="voice-agent-logo-ring voice-agent-logo-ring-outer" />
+      <span className="voice-agent-logo-ring voice-agent-logo-ring-inner" />
+      <span className="voice-agent-logo-core" />
+      <span className="voice-agent-logo-bars">
         <span />
         <span />
         <span />
@@ -974,11 +974,11 @@ function VoiceAgentShell({ onSessionReset }: VoiceAgentShellProps) {
         <div className="aurora-grid pointer-events-none absolute inset-0 opacity-80" />
 
         <div className="relative mx-auto flex min-h-[calc(100vh-2rem)] w-full max-w-[1380px] flex-col gap-5 rounded-[2rem] border border-white/10 bg-[rgba(7,17,31,0.78)] p-4 shadow-[0_30px_120px_rgba(2,8,18,0.58)] backdrop-blur-xl sm:p-6">
-          <header className="auralis-panel flex flex-col gap-4 rounded-[1.6rem] px-5 py-4 md:flex-row md:items-center md:justify-between">
+          <header className="voice-agent-panel flex flex-col gap-4 rounded-[1.6rem] px-5 py-4 md:flex-row md:items-center md:justify-between">
             <div>
               <div className="flex items-center gap-3">
                 <div className="flex h-11 w-11 items-center justify-center rounded-2xl border border-white/10 bg-[linear-gradient(135deg,rgba(124,92,255,0.22),rgba(25,211,255,0.14))] text-[color:var(--color-text-primary)] shadow-[0_0_32px_rgba(124,92,255,0.18)]">
-                  <AuralisLogoMark />
+                  <VoiceAgentLogoMark />
                 </div>
                 <div>
                   <p className="font-heading text-2xl font-semibold tracking-[-0.03em] text-[color:var(--color-text-primary)]">
@@ -1013,7 +1013,7 @@ function VoiceAgentShell({ onSessionReset }: VoiceAgentShellProps) {
           </header>
 
           {!HAS_PUBLIC_URL && (
-            <section className="auralis-panel flex items-start gap-3 rounded-[1.4rem] border border-[color:var(--color-warning)]/20 bg-[color:var(--color-warning)]/8 px-4 py-3 text-sm text-[color:var(--color-warning)]">
+            <section className="voice-agent-panel flex items-start gap-3 rounded-[1.4rem] border border-[color:var(--color-warning)]/20 bg-[color:var(--color-warning)]/8 px-4 py-3 text-sm text-[color:var(--color-warning)]">
               <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
               <p>
                 `NEXT_PUBLIC_LIVEKIT_URL` is not configured yet. The shell can
@@ -1075,7 +1075,7 @@ function VoiceAgentShell({ onSessionReset }: VoiceAgentShellProps) {
                     key={prompt}
                     type="button"
                     onClick={() => setTextInputValue(prompt)}
-                    className="auralis-panel rounded-[1.35rem] px-4 py-4 text-left text-sm leading-6 text-[color:var(--color-text-secondary)] transition hover:border-[color:var(--color-primary)]/25 hover:bg-white/[0.06] hover:text-[color:var(--color-text-primary)]"
+                    className="voice-agent-panel rounded-[1.35rem] px-4 py-4 text-left text-sm leading-6 text-[color:var(--color-text-secondary)] transition hover:border-[color:var(--color-primary)]/25 hover:bg-white/[0.06] hover:text-[color:var(--color-text-primary)]"
                   >
                     {prompt}
                   </button>
@@ -1087,7 +1087,7 @@ function VoiceAgentShell({ onSessionReset }: VoiceAgentShellProps) {
             <section
               className={`screen-view ${activeConsoleTransitionClass} grid gap-5 xl:grid-cols-[0.9fr_1.1fr]`}
             >
-                <article className="auralis-panel auralis-panel-elevated flex flex-col gap-5 rounded-[1.8rem] px-5 py-5">
+                <article className="voice-agent-panel voice-agent-panel-elevated flex flex-col gap-5 rounded-[1.8rem] px-5 py-5">
                   <div className="text-center">
                     <p className="text-xs font-semibold uppercase tracking-[0.24em] text-[color:var(--color-cyan)]">
                       Presence
@@ -1288,7 +1288,7 @@ function VoiceAgentShell({ onSessionReset }: VoiceAgentShellProps) {
                   )}
                 </article>
 
-                <article className="auralis-panel auralis-panel-elevated flex flex-col gap-5 rounded-[1.8rem] px-5 py-5">
+                <article className="voice-agent-panel voice-agent-panel-elevated flex flex-col gap-5 rounded-[1.8rem] px-5 py-5">
                   <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
                     <div>
                       <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[color:var(--color-cyan)]">
@@ -1366,7 +1366,7 @@ function VoiceAgentShell({ onSessionReset }: VoiceAgentShellProps) {
             </section>
 
               <section
-                className={`auralis-panel rounded-[1.8rem] px-5 py-5 ${activeConsoleTransitionClass}`}
+                className={`voice-agent-panel rounded-[1.8rem] px-5 py-5 ${activeConsoleTransitionClass}`}
               >
                 <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
                   <div>

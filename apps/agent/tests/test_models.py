@@ -22,11 +22,11 @@ class VoiceModelsTests(unittest.TestCase):
     def test_voice_session_info_payload_contains_started_at(self) -> None:
         payload = VoiceSessionInfo(
             session_id="room-1",
-            agent_name="auralis-agent",
+            agent_name="livekit-rag-agent",
         ).to_payload()
 
         self.assertEqual(payload["sessionId"], "room-1")
-        self.assertEqual(payload["agentName"], "auralis-agent")
+        self.assertEqual(payload["agentName"], "livekit-rag-agent")
         self.assertTrue(payload["startedAt"].endswith("Z"))
         self.assertEqual(payload["transport"], "livekit")
 

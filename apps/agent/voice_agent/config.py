@@ -61,19 +61,19 @@ class Settings:
                 or DEFAULT_AGENT_NAME
             ),
             stt_model=(
-                os.getenv("AURALIS_STT_MODEL", DEFAULT_STT_MODEL).strip()
+                os.getenv("VOICE_AGENT_STT_MODEL", DEFAULT_STT_MODEL).strip()
                 or DEFAULT_STT_MODEL
             ),
             llm_model=(
-                os.getenv("AURALIS_LLM_MODEL", DEFAULT_LLM_MODEL).strip()
+                os.getenv("VOICE_AGENT_LLM_MODEL", DEFAULT_LLM_MODEL).strip()
                 or DEFAULT_LLM_MODEL
             ),
             tts_model=(
-                os.getenv("AURALIS_TTS_MODEL", DEFAULT_TTS_MODEL).strip()
+                os.getenv("VOICE_AGENT_TTS_MODEL", DEFAULT_TTS_MODEL).strip()
                 or DEFAULT_TTS_MODEL
             ),
             tts_voice=(
-                os.getenv("AURALIS_TTS_VOICE", DEFAULT_TTS_VOICE).strip()
+                os.getenv("VOICE_AGENT_TTS_VOICE", DEFAULT_TTS_VOICE).strip()
                 or DEFAULT_TTS_VOICE
             ),
             rag_backend_url=(

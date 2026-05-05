@@ -446,7 +446,7 @@ class AgentRegistrationTests(unittest.TestCase):
             import voice_agent.agent_server as agent_server
 
             agent_server = importlib.reload(agent_server)
-            agent = agent_server.AuralisVoiceAgent()
+            agent = agent_server.LiveKitRagVoiceAgent()
 
         function_tools = ToolContext(agent.tools).function_tools
         self.assertIn("ask_knowledge_base", function_tools)

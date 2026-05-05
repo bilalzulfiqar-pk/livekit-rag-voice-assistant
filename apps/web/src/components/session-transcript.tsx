@@ -35,7 +35,7 @@ export function SessionTranscript({
   return (
     <div
       ref={containerRef}
-      className="auralis-scrollbar flex max-h-[30rem] flex-col gap-3 overflow-y-auto pr-1"
+      className="voice-agent-scrollbar flex max-h-[30rem] flex-col gap-3 overflow-y-auto pr-1"
     >
       {entries.map((entry) => (
         <article

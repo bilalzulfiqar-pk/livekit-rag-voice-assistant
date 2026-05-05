@@ -168,10 +168,10 @@ Below are the main variables most people need to understand first.
 | `LIVEKIT_API_KEY` | Worker API key | `your_livekit_api_key` |
 | `LIVEKIT_API_SECRET` | Worker API secret | `your_livekit_api_secret` |
 | `LIVEKIT_AGENT_NAME` | Registered LiveKit agent name | `livekit-rag-voice-agent` |
-| `AURALIS_STT_MODEL` | STT model identifier | `deepgram/flux-general-en` |
-| `AURALIS_LLM_MODEL` | Main conversational LLM used by the voice agent | `openai/gpt-4.1-mini` |
-| `AURALIS_TTS_MODEL` | TTS model identifier | `cartesia/sonic-3` |
-| `AURALIS_TTS_VOICE` | TTS voice identifier | `9626c31c-bec5-4cca-baa8-f8ba9e84c8bc` |
+| `VOICE_AGENT_STT_MODEL` | STT model identifier | `deepgram/flux-general-en` |
+| `VOICE_AGENT_LLM_MODEL` | Main conversational LLM used by the voice agent | `openai/gpt-4.1-mini` |
+| `VOICE_AGENT_TTS_MODEL` | TTS model identifier | `cartesia/sonic-3` |
+| `VOICE_AGENT_TTS_VOICE` | TTS voice identifier | `9626c31c-bec5-4cca-baa8-f8ba9e84c8bc` |
 | `RAG_BACKEND_URL` | Base URL of the RAG backend | `http://localhost:8000` |
 | `RAG_CONTEXT_PATH` | Retrieval endpoint used by the agent for KB context | `/retrieval/context` |
 | `RAG_CHAT_PATH` | Legacy/backend chat endpoint kept for compatibility | `/chat/ask` |

@@ -157,7 +157,7 @@ def prewarm(proc: JobProcess) -> None:
 server.setup_fnc = prewarm
 
 
-class AuralisVoiceAgent(Agent):
+class LiveKitRagVoiceAgent(Agent):
     def __init__(self, *, telemetry: VoiceAgentTelemetry | None = None) -> None:
         self._telemetry = telemetry
         super().__init__(
@@ -310,7 +310,7 @@ async def entrypoint(ctx: JobContext) -> None:
 
     await session.start(
         room=ctx.room,
-        agent=AuralisVoiceAgent(telemetry=telemetry),
+        agent=LiveKitRagVoiceAgent(telemetry=telemetry),
         room_options=room_io.RoomOptions(
             audio_input=room_io.AudioInputOptions(
                 noise_cancellation=noise_cancellation.BVC(),
