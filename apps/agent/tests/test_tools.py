@@ -303,6 +303,7 @@ class KnowledgeBaseToolsetTests(unittest.IsolatedAsyncioTestCase):
             result = await toolset.ask_knowledge_base("What services do you offer?")
 
         self.assertEqual(result, RAG_NO_RECORDS_MARKER)
+        mock_client.post.assert_awaited_once()
 
         telemetry.publish_kb_result.assert_called_once_with(
             success=True,
