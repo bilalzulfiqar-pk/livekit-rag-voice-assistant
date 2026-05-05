@@ -66,8 +66,9 @@ The Next.js token route is intentionally not shown as a main box in the diagram 
 - Docker Desktop
 - A LiveKit Cloud project
 - LiveKit URL, API key, and API secret
-- A backend provider key that matches `CHAT_PROVIDER` in `services/rag-backend/.env`
-  - the default `.env.example` uses `CHAT_PROVIDER=groq`, so the usual requirement is `GROQ_API_KEY`
+- Optional: a backend provider key if you want to use a provider-backed backend chat mode
+  - the default voice/RAG flow uses retrieval-only context and does not require a backend chat API key
+  - provider keys matter if you change `CHAT_PROVIDER` from `mock` to `groq`, `openai`, `gemini`, or `openrouter`
 
 ## Quick Start
 
@@ -86,7 +87,9 @@ Copy-Item apps\agent\.env.example apps\agent\.env
 Copy-Item services\rag-backend\.env.example services\rag-backend\.env
 ```
 
-Update those files with your own credentials and provider keys.
+Update those files with your own credentials and any optional provider keys you plan to use.
+
+For `services/rag-backend/.env`, the default `.env.example` now uses `CHAT_PROVIDER=mock`, which matches the current voice-agent architecture well. That means you can run the main voice + retrieval flow without adding a backend chat API key. Only add a provider key if you intentionally enable a provider-backed backend chat mode.
 
 ### 3. Start the full stack
 
@@ -185,8 +188,8 @@ For most setups, you only need to understand or change the variables below. The 
 | `POSTGRES_HOST` | PostgreSQL host | `postgres` |
 | `POSTGRES_PORT` | PostgreSQL port | `5432` |
 | `EMBEDDING_PROVIDER` | Embedding provider implementation | `local` |
-| `CHAT_PROVIDER` | Chat provider used by the backend configuration and legacy `/chat/ask` path | `groq` |
-| `GROQ_API_KEY` | Provider key required when `CHAT_PROVIDER=groq` | `gsk_...` |
+| `CHAT_PROVIDER` | Backend chat mode, mainly relevant for the legacy `/chat/ask` path | `mock` |
+| `GROQ_API_KEY` | Optional provider key if you switch `CHAT_PROVIDER` to `groq` | `gsk_...` |
 | `CORS_ALLOWED_ORIGINS` | Allowed browser origins | `http://localhost:3000` |
 
 ## Docker Commands
