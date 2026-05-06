@@ -24,6 +24,8 @@ services:
       - ./services/rag-backend/.env
     ports:
       - "8000:8000"
+    volumes:
+      - backend_cache:/code/.cache
     depends_on:
       postgres:
         condition: service_healthy
@@ -70,4 +72,5 @@ services:
 
 volumes:
   postgres_data:
+  backend_cache:
   agent_cache:
