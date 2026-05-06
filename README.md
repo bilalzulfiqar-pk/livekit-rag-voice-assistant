@@ -75,7 +75,7 @@ The Next.js token route is intentionally not shown as a main box in the diagram 
 ### 1. Clone the project
 
 ```powershell
-git clone <your-repo-url>
+git clone https://github.com/bilalzulfiqar-pk/livekit-rag-voice-assistant.git
 cd livekit-rag-voice-assistant
 ```
 
