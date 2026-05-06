@@ -68,8 +68,9 @@ class NoopChatReranker(BaseChatReranker):
 
 
 class FlashRankChatReranker(BaseChatReranker):
-    def __init__(self, *, model_name: str) -> None:
+    def __init__(self, *, model_name: str, cache_dir: str) -> None:
         self._configured_model_name = model_name
+        self._cache_dir = cache_dir
         self._ranker: Any | None = None
         self._lock = threading.Lock()
 
@@ -112,7 +113,7 @@ class FlashRankChatReranker(BaseChatReranker):
 
             from flashrank import Ranker
 
-            self._ranker = Ranker(model_name=self._configured_model_name)
+            self._ranker = Ranker(model_name=self._configured_model_name, cache_dir=self._cache_dir)
             return self._ranker
 
     def _rerank_sync(self, question: str, matches: list[RetrievalMatch]) -> list[RetrievalMatch]:
@@ -189,7 +190,7 @@ class FlashRankChatReranker(BaseChatReranker):
         return None
 
 
-def build_chat_reranker(*, enabled: bool, model_name: str) -> BaseChatReranker:
+def build_chat_reranker(*, enabled: bool, model_name: str, cache_dir: str) -> BaseChatReranker:
     if not enabled:
         return NoopChatReranker()
-    return FlashRankChatReranker(model_name=model_name)
+    return FlashRankChatReranker(model_name=model_name, cache_dir=cache_dir)

@@ -34,21 +34,33 @@ def _log_warmup_task_result(task: asyncio.Task[None]) -> None:
 async def lifespan(app: FastAPI | None):
     state_holder = app.state if app is not None else SimpleNamespace(chat_reranker=None)
     logger.info("Starting %s in %s mode", settings.app_name, settings.app_env)
+    flashrank_warmup_required = settings.flashrank_enabled and settings.flashrank_warmup_enabled
     readiness_state.begin_startup(
         requires_local_embedding=settings.embedding_provider == "local" and settings.local_embedding_warmup_enabled,
         embedding_runtime=settings.local_embedding_runtime if settings.embedding_provider == "local" else None,
+        requires_flashrank_warmup=flashrank_warmup_required,
+        flashrank_model=settings.flashrank_model if flashrank_warmup_required else None,
     )
     await initialize_database()
     readiness_state.mark_database_ready()
     state_holder.chat_reranker = build_chat_reranker(
         enabled=settings.flashrank_enabled,
         model_name=settings.flashrank_model,
+        cache_dir=settings.flashrank_cache_dir,
     )
-    if settings.flashrank_enabled and settings.flashrank_warmup_enabled:
+    if flashrank_warmup_required:
         try:
+            readiness_state.mark_flashrank_warming(model_name=settings.flashrank_model)
             await state_holder.chat_reranker.warmup()
+            readiness_state.mark_flashrank_ready(model_name=settings.flashrank_model)
         except Exception:
+            readiness_state.mark_flashrank_failed(
+                "Service is ready, but FlashRank warmup failed. Reranking may fall back to fast mode.",
+                model_name=settings.flashrank_model,
+            )
             logger.exception("FlashRank warmup failed. The backend will continue and fall back to fast mode if needed.")
+    else:
+        readiness_state.mark_flashrank_skipped()
     warmup_task: asyncio.Task[None] | None = None
     if settings.embedding_provider == "local" and settings.local_embedding_warmup_enabled:
         if settings.local_embedding_warmup_mode == "blocking":

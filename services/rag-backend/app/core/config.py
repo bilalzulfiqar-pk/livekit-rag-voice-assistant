@@ -82,8 +82,9 @@ class Settings(BaseSettings):
     chat_stream_delay_ms: int = Field(default=75, ge=0)
     chat_rerank_strategy_default: str = Field(default="hybrid")
     flashrank_enabled: bool = Field(default=True)
-    flashrank_warmup_enabled: bool = Field(default=False)
+    flashrank_warmup_enabled: bool = Field(default=True)
     flashrank_model: str = Field(default="ms-marco-TinyBERT-L-2-v2")
+    flashrank_cache_dir: str = Field(default=".cache/flashrank")
     flashrank_neural_top_n: int = Field(default=15, ge=1)
     flashrank_hybrid_top_n: int = Field(default=10, ge=1)
     chat_no_context_response: str = Field(

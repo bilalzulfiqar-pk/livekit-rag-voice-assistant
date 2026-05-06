@@ -19,8 +19,10 @@ async def readiness_check() -> JSONResponse:
         "checks": {
             "database": "ready" if snapshot.database_ready else "starting",
             "embedding": snapshot.embedding_state,
+            "flashrank": snapshot.flashrank_state,
         },
         "embedding_runtime": snapshot.embedding_runtime,
+        "flashrank_model": snapshot.flashrank_model,
         "message": snapshot.message,
     }
     response_status = status.HTTP_200_OK if snapshot.status == "ready" else status.HTTP_503_SERVICE_UNAVAILABLE

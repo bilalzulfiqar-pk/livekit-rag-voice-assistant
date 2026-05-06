@@ -24,6 +24,7 @@ class MainLifespanTests(unittest.IsolatedAsyncioTestCase):
             patch("app.main.settings.embedding_provider", "local"),
             patch("app.main.settings.local_embedding_warmup_enabled", True),
             patch("app.main.settings.local_embedding_warmup_mode", "background"),
+            patch("app.main.settings.flashrank_warmup_enabled", False),
         ):
             manager = lifespan(None)
             await asyncio.wait_for(manager.__aenter__(), timeout=0.1)
@@ -54,10 +55,33 @@ class MainLifespanTests(unittest.IsolatedAsyncioTestCase):
             patch("app.main.settings.embedding_provider", "local"),
             patch("app.main.settings.local_embedding_warmup_enabled", True),
             patch("app.main.settings.local_embedding_warmup_mode", "blocking"),
+            patch("app.main.settings.flashrank_warmup_enabled", False),
         ):
             manager = lifespan(None)
             await manager.__aenter__()
             self.assertTrue(warmup_finished)
+            await manager.__aexit__(None, None, None)
+
+        initialize_database.assert_awaited_once()
+        close_database_engine.assert_awaited_once()
+
+    async def test_lifespan_blocks_until_flashrank_warmup_finishes_when_configured(self):
+        initialize_database = AsyncMock()
+        close_database_engine = AsyncMock()
+        fake_reranker = AsyncMock()
+        fake_reranker.warmup = AsyncMock()
+
+        with (
+            patch("app.main.initialize_database", initialize_database),
+            patch("app.main.close_database_engine", close_database_engine),
+            patch("app.main.build_chat_reranker", return_value=fake_reranker),
+            patch("app.main.settings.flashrank_enabled", True),
+            patch("app.main.settings.flashrank_warmup_enabled", True),
+            patch("app.main.settings.embedding_provider", "mock"),
+        ):
+            manager = lifespan(None)
+            await manager.__aenter__()
+            fake_reranker.warmup.assert_awaited_once()
             await manager.__aexit__(None, None, None)
 
         initialize_database.assert_awaited_once()
